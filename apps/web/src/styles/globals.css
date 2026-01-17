@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-forge-bg text-slate-100 antialiased;
+  font-family: "Inter", "SF Pro Text", system-ui, sans-serif;
+}
+
+* {
+  @apply border-forge-border;
+}
