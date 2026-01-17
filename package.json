@@ -1,0 +1,13 @@
+{
+  "name": "forge",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:web": "pnpm -C apps/web dev",
+    "dev:api": "cd apps/api && PYTHONPATH=src uvicorn forge_api.main:app --host 0.0.0.0 --port 8000",
+    "test:api": "cd apps/api && PYTHONPATH=src pytest -q",
+    "lint:web": "pnpm -C apps/web lint",
+    "build:web": "pnpm -C apps/web build",
+    "check": "pnpm test:api && pnpm lint:web && pnpm build:web"
+  }
+}

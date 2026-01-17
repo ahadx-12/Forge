@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-ink-900 text-frost-100 antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 157, 255, 0.6) rgba(15, 23, 42, 0.4);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(124, 157, 255, 0.6);
+  border-radius: 999px;
+}
