@@ -5,7 +5,16 @@ __pycache__/
 *.pyc
 *.pyo
 .apps
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ttf
+*.otf
 apps/api/.data/
+apps/api/**/.data/
 apps/web/.next/
 apps/web/node_modules/
 apps/web/out/

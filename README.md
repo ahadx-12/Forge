@@ -1,6 +1,6 @@
 # FORGE
 
-Week 1 delivers a production-ready PDF upload + editor flow with deterministic extraction foundations.
+Week 1 delivers a production-ready PDF upload and editor flow with deterministic extraction foundations.
 
 ## Local development
 
@@ -30,23 +30,30 @@ Then open `http://localhost:3000` and upload a PDF on the dashboard.
 pnpm check
 ```
 
-## Railway deployment
+## Deploy to Railway
 
-Create two services:
+1. Create a new Railway project and connect this GitHub repository.
+2. Create **two services** from the same repo.
 
-### API service
-- Root directory: `apps/api`
-- Start command: `Dockerfile`
-- Environment variables:
-  - `FORGE_STORAGE_LOCAL_DIR=/data` (or a mounted volume)
-  - `WEB_ORIGIN=https://your-web-domain`
+### Service 1: API
 
-### Web service
-- Root directory: `apps/web`
-- Start command: `Dockerfile`
-- Environment variables:
-  - `NEXT_PUBLIC_API_BASE_URL=https://your-api-domain`
+- **Root Directory**: `apps/api`
+- **Build**: Railway will detect the `Dockerfile` automatically.
+- **Start Command**: Use the Dockerfile entrypoint (do not override).
+- **Environment variables**:
+  - `FORGE_STORAGE_LOCAL_DIR=.data`
+  - `WEB_ORIGIN=https://<your-web-service-url>`
+  - `LOG_LEVEL=INFO`
 
-## Environment variables
+### Service 2: Web
 
-See `.env.example` for local defaults.
+- **Root Directory**: `apps/web`
+- **Build**: Railway will detect the `Dockerfile` automatically.
+- **Start Command**: Use the Dockerfile entrypoint (do not override).
+- **Environment variables**:
+  - `NEXT_PUBLIC_API_BASE_URL=https://<your-api-service-url>`
+
+### Notes
+
+- Each service uses its own Dockerfile, and Railway injects the `PORT` environment variable automatically.
+- CORS is controlled by `WEB_ORIGIN` on the API; it must match the deployed Web URL.

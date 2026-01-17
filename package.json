@@ -1,0 +1,8 @@
+{
+  "name": "forge",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "check": "pnpm -C apps/web lint && pnpm -C apps/web build && (cd apps/api && PYTHONPATH=src pytest -q)"
+  }
+}
