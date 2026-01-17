@@ -31,6 +31,55 @@ export type DecodePayload = {
   extracted_at_iso: string;
 };
 
+export type IRPrimitive = {
+  id: string;
+  kind: "text" | "path";
+  bbox: number[];
+  z_index: number;
+  style: Record<string, unknown>;
+  signature_fields: Record<string, unknown>;
+  text?: string | null;
+};
+
+export type IRPage = {
+  doc_id: string;
+  page_index: number;
+  width_pt: number;
+  height_pt: number;
+  rotation: number;
+  primitives: IRPrimitive[];
+};
+
+export type HitTestPoint = {
+  x: number;
+  y: number;
+};
+
+export type HitTestRect = {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+};
+
+export type HitTestRequest = {
+  point?: HitTestPoint;
+  rect?: HitTestRect;
+};
+
+export type HitTestCandidate = {
+  id: string;
+  score: number;
+  bbox: number[];
+  kind: "text" | "path";
+};
+
+export type HitTestResponse = {
+  doc_id: string;
+  page_index: number;
+  candidates: HitTestCandidate[];
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 export function downloadUrl(docId: string): string {
@@ -65,4 +114,30 @@ export async function getDecode(docId: string): Promise<DecodePayload> {
     throw new Error("Failed to load decode data");
   }
   return (await response.json()) as DecodePayload;
+}
+
+export async function getIR(docId: string, pageIndex: number): Promise<IRPage> {
+  const response = await fetch(`${API_BASE}/v1/ir/${docId}?page=${pageIndex}`);
+  if (!response.ok) {
+    throw new Error("Failed to load IR data");
+  }
+  return (await response.json()) as IRPage;
+}
+
+export async function hitTest(
+  docId: string,
+  pageIndex: number,
+  payload: HitTestRequest
+): Promise<HitTestResponse> {
+  const response = await fetch(`${API_BASE}/v1/hittest/${docId}?page=${pageIndex}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error("Failed to hit-test");
+  }
+  return (await response.json()) as HitTestResponse;
 }

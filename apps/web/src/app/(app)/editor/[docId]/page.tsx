@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { FileText } from "lucide-react";
 
 import { ChatDock } from "@/components/editor/ChatDock";
+import { InspectorPanel } from "@/components/editor/InspectorPanel";
 import { PdfStage, PdfThumbnails } from "@/components/editor/PdfStage";
 import { getDecode, getDocumentMeta } from "@/lib/api";
 
@@ -102,8 +103,9 @@ export default function EditorPage() {
         <PdfStage docId={docId} initialPageCount={pageCount} />
 
         <div className="flex flex-col gap-4">
+          <InspectorPanel />
           <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
-            <h3 className="text-sm font-semibold text-slate-200">Inspector</h3>
+            <h3 className="text-sm font-semibold text-slate-200">Document</h3>
             <div className="mt-3 space-y-2 text-xs text-slate-400">
               <p>Filename: {filename}</p>
               <p>Pages: {pageCount || "…"}</p>

@@ -36,3 +36,16 @@ def make_contract_pdf_bytes() -> bytes:
     pdf_bytes = doc.tobytes()
     doc.close()
     return pdf_bytes
+
+
+def make_overlap_pdf_bytes() -> bytes:
+    doc = _new_doc()
+    page = doc.new_page(width=400, height=400)
+    rect_a = fitz.Rect(100, 100, 200, 200)
+    rect_b = fitz.Rect(150, 150, 250, 250)
+    page.draw_rect(rect_a, color=(0.1, 0.2, 0.8), width=2)
+    page.draw_rect(rect_b, color=(0.8, 0.2, 0.1), width=2)
+    page.insert_text((110, 110), "Overlap", fontsize=12)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes

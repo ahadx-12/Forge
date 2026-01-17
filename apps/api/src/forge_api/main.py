@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from forge_api.routers.decode import router as decode_router
 from forge_api.routers.documents import router as documents_router
 from forge_api.routers.health import router as health_router
+from forge_api.routers.ir import router as ir_router
+from forge_api.routers.ir import router as ir_router
 from forge_api.settings import get_settings
 
 
@@ -33,3 +35,5 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(decode_router)
+app.include_router(ir_router)
+app.include_router(ir_router)
