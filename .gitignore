@@ -1,0 +1,11 @@
+node_modules/
+.pnpm-store/
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.apps
+apps/api/.data/
+apps/web/.next/
+apps/web/node_modules/
+apps/web/out/
