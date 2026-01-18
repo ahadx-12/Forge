@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Minus, Plus, RefreshCw } from "lucide-react";
 
-import { downloadUrl, getIR } from "@/lib/api";
+import { downloadUrl } from "@/lib/api";
 import type { IRPage } from "@/lib/api";
 import { useSelectionStore } from "@/lib/state/store";
 import { SelectionLayer } from "@/components/editor/SelectionLayer";
@@ -23,6 +23,11 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
   const [numPages, setNumPages] = useState<number | null>(initialPageCount ?? null);
   const fileUrl = useMemo(() => downloadUrl(docId), [docId]);
   const cycleCandidate = useSelectionStore((state) => state.cycleCandidate);
+  const loadPatchsets = useSelectionStore((state) => state.loadPatchsets);
+
+  useEffect(() => {
+    void loadPatchsets(docId);
+  }, [docId, loadPatchsets]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -144,18 +149,20 @@ function PageWithOverlay({ docId, pageIndex, scale }: PageWithOverlayProps) {
   const [pageIR, setPageIR] = useState<IRPage | null>(null);
   const [renderedSize, setRenderedSize] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
-  const setIRPage = useSelectionStore((state) => state.setIRPage);
+  const previewComposite = useSelectionStore((state) => state.previewComposite);
+  const patchsets = useSelectionStore((state) => state.patchsets);
+  const patchVisibility = useSelectionStore((state) => state.patchVisibility);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const page = await getIR(docId, pageIndex);
+        await previewComposite(docId, pageIndex);
         if (cancelled) {
           return;
         }
-        setPageIR(page);
-        setIRPage(pageIndex, page);
+        const compositePage = useSelectionStore.getState().irPages[pageIndex] ?? null;
+        setPageIR(compositePage);
       } catch (error) {
         console.error("Failed to load IR page", error);
       }
@@ -164,7 +171,7 @@ function PageWithOverlay({ docId, pageIndex, scale }: PageWithOverlayProps) {
     return () => {
       cancelled = true;
     };
-  }, [docId, pageIndex, setIRPage]);
+  }, [docId, pageIndex, previewComposite, patchsets, patchVisibility]);
 
   useEffect(() => {
     const element = containerRef.current;
