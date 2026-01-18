@@ -142,13 +142,19 @@ export type PatchPlanResponse = {
   };
 };
 
+export type ExportMaskMode = "SOLID" | "AUTO_BG";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 export function downloadUrl(docId: string): string {
   return `${API_BASE}/v1/documents/${docId}/download`;
 }
 
-export function exportPdfUrl(docId: string): string {
+export function exportPdfUrl(docId: string, maskMode?: ExportMaskMode): string {
+  if (maskMode) {
+    const params = new URLSearchParams({ mask_mode: maskMode });
+    return `${API_BASE}/v1/export/${docId}?${params.toString()}`;
+  }
   return `${API_BASE}/v1/export/${docId}`;
 }
 

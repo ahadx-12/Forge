@@ -54,3 +54,15 @@ def make_overlap_pdf_bytes() -> bytes:
     pdf_bytes = doc.tobytes()
     doc.close()
     return pdf_bytes
+
+
+def make_colored_bg_pdf_bytes() -> bytes:
+    doc = _new_doc()
+    page = doc.new_page(width=400, height=400)
+    background = fitz.Rect(50, 50, 350, 200)
+    page.draw_rect(background, color=(0.2, 0.4, 0.6), fill=(0.2, 0.4, 0.6))
+    page.insert_text((70, 120), "Background Sample", fontsize=14, color=(1, 1, 1))
+    page.insert_text((70, 150), "Edit me", fontsize=12, color=(1, 1, 1))
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes

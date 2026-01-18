@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from uuid import uuid4
 
 from forge_api.schemas.patch import PatchDiffEntry, PatchOpResult, PatchsetRecord
-from forge_api.services.storage import get_storage
+from forge_api.services.storage import get_patch_storage
 
 
 def _patch_log_key(doc_id: str) -> str:
@@ -14,16 +13,16 @@ def _patch_log_key(doc_id: str) -> str:
 
 
 def load_patch_log(doc_id: str) -> list[PatchsetRecord]:
-    storage = get_storage()
+    storage = get_patch_storage()
     key = _patch_log_key(doc_id)
     if not storage.exists(key):
         return []
-    payload = json.loads(Path(storage.get_path(key)).read_text())
+    payload = json.loads(storage.get_bytes(key).decode("utf-8"))
     return [PatchsetRecord.model_validate(item) for item in payload]
 
 
 def save_patch_log(doc_id: str, patchsets: list[PatchsetRecord]) -> None:
-    storage = get_storage()
+    storage = get_patch_storage()
     key = _patch_log_key(doc_id)
     payload = [record.model_dump(mode="json") for record in patchsets]
     storage.put_bytes(key, json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8"))
