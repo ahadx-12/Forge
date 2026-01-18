@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+import logging
+import traceback
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from forge_api.routers.ai import router as ai_router
 from forge_api.routers.decode import router as decode_router
@@ -13,6 +17,16 @@ from forge_api.routers.patches import router as patches_router
 from forge_api.settings import get_settings
 
 
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("forge_api")
+
+
+# -----------------------------------------------------------------------------
+# CORS
+# -----------------------------------------------------------------------------
 def _cors_origins() -> list[str]:
     settings = get_settings()
     if settings.WEB_ORIGIN:
@@ -27,7 +41,11 @@ def _cors_origins() -> list[str]:
     ]
 
 
+# -----------------------------------------------------------------------------
+# App
+# -----------------------------------------------------------------------------
 app = FastAPI(title="Forge API", version="1.0.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -36,6 +54,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# -----------------------------------------------------------------------------
+# Global exception handler (CRITICAL FOR DEBUGGING)
+# -----------------------------------------------------------------------------
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    Ensures ALL 500s print a full traceback to Railway Logs.
+    """
+    logger.error(
+        "Unhandled exception on %s %s\n%s",
+        request.method,
+        request.url.path,
+        traceback.format_exc(),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_error",
+            "path": request.url.path,
+        },
+    )
+
+
+# -----------------------------------------------------------------------------
+# Startup logging (confirms env + storage config)
+# -----------------------------------------------------------------------------
+@app.on_event("startup")
+async def startup_event():
+    settings = get_settings()
+    logger.info("Forge API starting")
+    logger.info("FORGE_ENV=%s", settings.FORGE_ENV)
+    logger.info("STORAGE_DRIVER=%s", settings.FORGE_STORAGE_DRIVER)
+    logger.info("S3_BUCKET=%s", getattr(settings, "FORGE_S3_BUCKET", None))
+    logger.info("S3_ENDPOINT=%s", getattr(settings, "FORGE_S3_ENDPOINT", None))
+
+
+# -----------------------------------------------------------------------------
+# Routers
+# -----------------------------------------------------------------------------
 app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(decode_router)
