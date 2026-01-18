@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy requirements first for caching
+# Copy requirements from the build context (apps/api)
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the API app (including src/)
+# Copy the rest of the API source
 COPY . .
 
 ENV PYTHONPATH=src
