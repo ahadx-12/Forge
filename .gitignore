@@ -18,3 +18,4 @@ apps/api/**/.data/
 apps/web/.next/
 apps/web/node_modules/
 apps/web/out/
+apps/web/public/pdf.worker.min.mjs

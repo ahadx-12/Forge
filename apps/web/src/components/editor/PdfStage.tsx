@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Document, Page, pdfjs } from "react-pdf";
 import { Minus, Plus, RefreshCw } from "lucide-react";
 
 import { downloadUrl } from "@/lib/api";
@@ -9,8 +8,28 @@ import type { IRPage } from "@/lib/api";
 import { useSelectionStore } from "@/lib/state/store";
 import { SelectionLayer } from "@/components/editor/SelectionLayer";
 
-if (typeof window !== "undefined") {
-  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+type ReactPdfModule = typeof import("react-pdf");
+
+function useReactPdf() {
+  const [module, setModule] = useState<ReactPdfModule | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    import("react-pdf").then((mod) => {
+      if (!mounted) {
+        return;
+      }
+      if (typeof window !== "undefined") {
+        mod.pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      }
+      setModule(mod);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  return module;
 }
 
 interface PdfStageProps {
@@ -24,6 +43,7 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
   const fileUrl = useMemo(() => downloadUrl(docId), [docId]);
   const cycleCandidate = useSelectionStore((state) => state.cycleCandidate);
   const loadPatchsets = useSelectionStore((state) => state.loadPatchsets);
+  const reactPdf = useReactPdf();
 
   useEffect(() => {
     void loadPatchsets(docId);
@@ -41,6 +61,16 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
       window.removeEventListener("keydown", handler);
     };
   }, [cycleCandidate]);
+
+  if (!reactPdf) {
+    return (
+      <div className="flex h-full items-center justify-center rounded-2xl border border-forge-border bg-forge-panel/60 text-sm text-slate-400">
+        Loading PDF viewer…
+      </div>
+    );
+  }
+
+  const { Document, Page } = reactPdf;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -86,7 +116,7 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
               id={`page-${index + 1}`}
               className="mb-6 flex justify-center"
             >
-              <PageWithOverlay docId={docId} pageIndex={index} scale={scale} />
+              <PageWithOverlay docId={docId} pageIndex={index} scale={scale} PageComponent={Page} />
             </div>
           ))}
         </Document>
@@ -104,6 +134,17 @@ interface PdfThumbnailsProps {
 
 export function PdfThumbnails({ docId, pageCount, activePage, onSelect }: PdfThumbnailsProps) {
   const fileUrl = useMemo(() => downloadUrl(docId), [docId]);
+  const reactPdf = useReactPdf();
+
+  if (!reactPdf) {
+    return (
+      <div className="h-full rounded-2xl border border-forge-border bg-forge-panel/60 p-3 text-xs text-slate-500">
+        Loading thumbnails…
+      </div>
+    );
+  }
+
+  const { Document, Page } = reactPdf;
 
   return (
     <div className="h-full overflow-y-auto rounded-2xl border border-forge-border bg-forge-panel/60 p-3">
@@ -143,9 +184,10 @@ interface PageWithOverlayProps {
   docId: string;
   pageIndex: number;
   scale: number;
+  PageComponent: ReactPdfModule["Page"];
 }
 
-function PageWithOverlay({ docId, pageIndex, scale }: PageWithOverlayProps) {
+function PageWithOverlay({ docId, pageIndex, scale, PageComponent }: PageWithOverlayProps) {
   const [pageIR, setPageIR] = useState<IRPage | null>(null);
   const [renderedSize, setRenderedSize] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -193,7 +235,7 @@ function PageWithOverlay({ docId, pageIndex, scale }: PageWithOverlayProps) {
 
   return (
     <div ref={containerRef} className="relative inline-block">
-      <Page
+      <PageComponent
         pageNumber={pageIndex + 1}
         scale={scale}
         renderAnnotationLayer={false}

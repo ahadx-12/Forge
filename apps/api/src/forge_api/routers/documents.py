@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
+from io import BytesIO
 from uuid import uuid4
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 
 from forge_api.schemas.api import DocumentMeta, UploadResponse
+from forge_api.settings import get_settings
 from forge_api.services.storage import get_storage
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
@@ -31,7 +32,7 @@ def _load_meta(doc_id: str) -> DocumentMeta:
     meta_key = _meta_path(doc_id)
     if not storage.exists(meta_key):
         raise HTTPException(status_code=404, detail="Document not found")
-    meta_bytes = Path(storage.get_path(meta_key)).read_bytes()
+    meta_bytes = storage.get_bytes(meta_key)
     payload = json.loads(meta_bytes.decode("utf-8"))
     return DocumentMeta(**payload)
 
@@ -41,6 +42,10 @@ async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
     if file.content_type not in {"application/pdf", "application/x-pdf"}:
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     content = await file.read()
+    settings = get_settings()
+    max_bytes = settings.FORGE_MAX_UPLOAD_MB * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail="File exceeds upload limit")
     doc_id = str(uuid4())
     storage = get_storage()
     storage.put_bytes(_pdf_path(doc_id), content, content_type=file.content_type)
@@ -60,10 +65,17 @@ def get_document(doc_id: str) -> DocumentMeta:
 
 
 @router.get("/{doc_id}/download")
-def download_document(doc_id: str) -> FileResponse:
+def download_document(doc_id: str) -> Response:
     storage = get_storage()
     pdf_key = _pdf_path(doc_id)
     if not storage.exists(pdf_key):
         raise HTTPException(status_code=404, detail="Document not found")
-    path = storage.get_path(pdf_key)
-    return FileResponse(path, media_type="application/pdf", filename=f"{doc_id}.pdf")
+    if hasattr(storage, "get_path"):
+        path = storage.get_path(pdf_key)
+        return FileResponse(path, media_type="application/pdf", filename=f"{doc_id}.pdf")
+    pdf_bytes = storage.get_bytes(pdf_key)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{doc_id}.pdf"'},
+    )

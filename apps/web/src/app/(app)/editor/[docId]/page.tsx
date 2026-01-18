@@ -8,7 +8,7 @@ import { ChatDock } from "@/components/editor/ChatDock";
 import { InspectorPanel } from "@/components/editor/InspectorPanel";
 import { PatchTimeline } from "@/components/editor/PatchTimeline";
 import { PdfStage, PdfThumbnails } from "@/components/editor/PdfStage";
-import { getDecode, getDocumentMeta } from "@/lib/api";
+import { exportPdfUrl, getDecode, getDocumentMeta, type ExportMaskMode } from "@/lib/api";
 
 export default function EditorPage() {
   const params = useParams<{ docId: string }>();
@@ -18,6 +18,7 @@ export default function EditorPage() {
   const [sizeBytes, setSizeBytes] = useState(0);
   const [activePage, setActivePage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [maskMode, setMaskMode] = useState<ExportMaskMode>("AUTO_BG");
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +69,10 @@ export default function EditorPage() {
     return <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-6">{error}</div>;
   }
 
+  const handleExport = () => {
+    window.open(exportPdfUrl(docId, maskMode), "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div className="flex h-full flex-col gap-6">
       <div className="flex items-center gap-4 rounded-2xl border border-forge-border bg-forge-panel/70 px-6 py-4">
@@ -103,6 +108,29 @@ export default function EditorPage() {
         <div className="flex flex-col gap-4">
           <InspectorPanel docId={docId} />
           <PatchTimeline docId={docId} pageIndex={activePage - 1} />
+          <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
+            <h3 className="text-sm font-semibold text-slate-200">Export</h3>
+            <div className="mt-3 space-y-3 text-xs text-slate-400">
+              <label className="block text-xs uppercase tracking-wide text-slate-500">
+                Mask mode
+                <select
+                  className="mt-2 w-full rounded-xl border border-forge-border bg-forge-panel/60 px-3 py-2 text-sm text-white"
+                  value={maskMode}
+                  onChange={(event) => setMaskMode(event.target.value as ExportMaskMode)}
+                >
+                  <option value="AUTO_BG">Auto background</option>
+                  <option value="SOLID">Solid white</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={handleExport}
+                className="w-full rounded-full bg-forge-accent px-4 py-2 text-sm font-semibold text-white shadow-glow"
+              >
+                Export PDF
+              </button>
+            </div>
+          </div>
           <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
             <h3 className="text-sm font-semibold text-slate-200">Document</h3>
             <div className="mt-3 space-y-2 text-xs text-slate-400">

@@ -17,6 +17,8 @@ def _cors_origins() -> list[str]:
     settings = get_settings()
     if settings.WEB_ORIGIN:
         return [origin.strip() for origin in settings.WEB_ORIGIN.split(",") if origin.strip()]
+    if settings.FORGE_ENV.lower() == "production":
+        return []
     return [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

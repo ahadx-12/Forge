@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import fitz
@@ -40,65 +39,70 @@ def decode_document(doc_id: str) -> dict[str, Any]:
     storage = get_storage()
     decode_key = f"documents/{doc_id}/decode.json"
     if storage.exists(decode_key):
-        return json.loads(Path(storage.get_path(decode_key)).read_text())
+        return json.loads(storage.get_bytes(decode_key).decode("utf-8"))
 
-    pdf_path = storage.get_path(f"documents/{doc_id}/original.pdf")
-    if not Path(pdf_path).exists():
+    pdf_key = f"documents/{doc_id}/original.pdf"
+    if not storage.exists(pdf_key):
         raise FileNotFoundError("Document PDF missing")
 
-    doc = fitz.open(pdf_path)
+    pdf_bytes = storage.get_bytes(pdf_key)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages: list[dict[str, Any]] = []
 
-    for index in range(len(doc)):
-        page = doc[index]
-        page_items: list[dict[str, Any]] = []
+    try:
+        page_count = len(doc)
+        for index in range(page_count):
+            page = doc[index]
+            page_items: list[dict[str, Any]] = []
 
-        text_dict = page.get_text("dict")
-        for block in text_dict.get("blocks", []):
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span.get("text", "").strip()
-                    if not text:
-                        continue
-                    page_items.append(
-                        {
-                            "kind": "text",
-                            "bbox": _normalize_bbox(span.get("bbox")),
-                            "text": text,
-                            "font": span.get("font"),
-                            "size": _round(span.get("size", 0.0)),
-                            "color": span.get("color"),
-                        }
-                    )
+            text_dict = page.get_text("dict")
+            for block in text_dict.get("blocks", []):
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span.get("text", "").strip()
+                        if not text:
+                            continue
+                        page_items.append(
+                            {
+                                "kind": "text",
+                                "bbox": _normalize_bbox(span.get("bbox")),
+                                "text": text,
+                                "font": span.get("font"),
+                                "size": _round(span.get("size", 0.0)),
+                                "color": span.get("color"),
+                            }
+                        )
 
-        for drawing in page.get_drawings():
-            rect = drawing.get("rect")
-            if rect is None:
-                continue
-            page_items.append(
+            for drawing in page.get_drawings():
+                rect = drawing.get("rect")
+                if rect is None:
+                    continue
+                page_items.append(
+                    {
+                        "kind": "drawing",
+                        "bbox": _rect_to_list(rect),
+                        "width": _round(drawing.get("width", 0.0)),
+                        "color": drawing.get("color"),
+                        "fill": drawing.get("fill"),
+                    }
+                )
+
+            page_items.sort(key=_sort_key)
+            pages.append(
                 {
-                    "kind": "drawing",
-                    "bbox": _rect_to_list(rect),
-                    "width": _round(drawing.get("width", 0.0)),
-                    "color": drawing.get("color"),
-                    "fill": drawing.get("fill"),
+                    "index": index,
+                    "width_pt": _round(page.rect.width),
+                    "height_pt": _round(page.rect.height),
+                    "rotation": page.rotation,
+                    "items": page_items,
                 }
             )
-
-        page_items.sort(key=_sort_key)
-        pages.append(
-            {
-                "index": index,
-                "width_pt": _round(page.rect.width),
-                "height_pt": _round(page.rect.height),
-                "rotation": page.rotation,
-                "items": page_items,
-            }
-        )
+    finally:
+        doc.close()
 
     payload = {
         "doc_id": doc_id,
-        "page_count": len(doc),
+        "page_count": page_count,
         "pages": pages,
         "extracted_at_iso": datetime.now(timezone.utc).isoformat(),
     }

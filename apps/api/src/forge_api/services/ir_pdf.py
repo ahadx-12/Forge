@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import fitz
 
@@ -66,13 +65,14 @@ def get_page_ir(doc_id: str, page_index: int) -> IRPage:
     storage = get_storage()
     cache_key = _cache_key(doc_id, page_index)
     if storage.exists(cache_key):
-        return _deserialize_ir_page(Path(storage.get_path(cache_key)).read_text())
+        return _deserialize_ir_page(storage.get_bytes(cache_key).decode("utf-8"))
 
-    pdf_path = storage.get_path(f"documents/{doc_id}/original.pdf")
-    if not Path(pdf_path).exists():
+    pdf_key = f"documents/{doc_id}/original.pdf"
+    if not storage.exists(pdf_key):
         raise FileNotFoundError("Document PDF missing")
 
-    doc = fitz.open(pdf_path)
+    pdf_bytes = storage.get_bytes(pdf_key)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         if page_index < 0 or page_index >= len(doc):
             raise IndexError("Page index out of range")
