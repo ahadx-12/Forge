@@ -6,6 +6,7 @@ import { FileText } from "lucide-react";
 
 import { ChatDock } from "@/components/editor/ChatDock";
 import { InspectorPanel } from "@/components/editor/InspectorPanel";
+import { PatchTimeline } from "@/components/editor/PatchTimeline";
 import { PdfStage, PdfThumbnails } from "@/components/editor/PdfStage";
 import { getDecode, getDocumentMeta } from "@/lib/api";
 
@@ -23,10 +24,7 @@ export default function EditorPage() {
 
     async function load() {
       try {
-        const [meta, decode] = await Promise.all([
-          getDocumentMeta(docId),
-          getDecode(docId)
-        ]);
+        const [meta, decode] = await Promise.all([getDocumentMeta(docId), getDecode(docId)]);
         if (cancelled) {
           return;
         }
@@ -103,7 +101,8 @@ export default function EditorPage() {
         <PdfStage docId={docId} initialPageCount={pageCount} />
 
         <div className="flex flex-col gap-4">
-          <InspectorPanel />
+          <InspectorPanel docId={docId} />
+          <PatchTimeline docId={docId} pageIndex={activePage - 1} />
           <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
             <h3 className="text-sm font-semibold text-slate-200">Document</h3>
             <div className="mt-3 space-y-2 text-xs text-slate-400">
@@ -112,7 +111,7 @@ export default function EditorPage() {
               <p>Size: {sizeLabel}</p>
             </div>
           </div>
-          <ChatDock />
+          <ChatDock docId={docId} />
         </div>
       </div>
     </div>

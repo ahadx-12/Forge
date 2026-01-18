@@ -83,3 +83,7 @@ def get_page_ir(doc_id: str, page_index: int) -> IRPage:
         return schema_page
     finally:
         doc.close()
+
+
+def get_base_ir_page(doc_id: str, page_index: int) -> IRPage:
+    return get_page_ir(doc_id, page_index)

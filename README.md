@@ -44,6 +44,8 @@ pnpm check
   - `FORGE_STORAGE_LOCAL_DIR=.data`
   - `WEB_ORIGIN=https://<your-web-service-url>`
   - `LOG_LEVEL=INFO`
+  - `OPENAI_API_KEY=...`
+  - `OPENAI_MODEL=gpt-5.2` (optional override)
 
 ### Service 2: Web
 
@@ -57,3 +59,4 @@ pnpm check
 
 - Each service uses its own Dockerfile, and Railway injects the `PORT` environment variable automatically.
 - CORS is controlled by `WEB_ORIGIN` on the API; it must match the deployed Web URL.
+- The OpenAI key is required only for AI planning endpoints and stays server-side in the API service.

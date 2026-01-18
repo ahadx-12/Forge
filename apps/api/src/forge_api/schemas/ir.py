@@ -13,6 +13,7 @@ class IRPrimitive(BaseModel):
     style: dict[str, Any]
     signature_fields: dict[str, Any]
     text: str | None = None
+    patch_meta: dict[str, Any] | None = None
 
 
 class IRPage(BaseModel):

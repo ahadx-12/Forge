@@ -39,6 +39,7 @@ export type IRPrimitive = {
   style: Record<string, unknown>;
   signature_fields: Record<string, unknown>;
   text?: string | null;
+  patch_meta?: Record<string, unknown> | null;
 };
 
 export type IRPage = {
@@ -80,10 +81,75 @@ export type HitTestResponse = {
   candidates: HitTestCandidate[];
 };
 
+export type PatchOp =
+  | {
+      op: "set_style";
+      target_id: string;
+      stroke_color?: number[] | number | null;
+      stroke_width_pt?: number | null;
+      fill_color?: number[] | number | null;
+      opacity?: number | null;
+    }
+  | {
+      op: "replace_text";
+      target_id: string;
+      new_text: string;
+      policy: "FIT_IN_BOX" | "OVERFLOW_NOTICE";
+    };
+
+export type PatchsetInput = {
+  ops: PatchOp[];
+  page_index: number;
+  selected_ids?: string[] | null;
+  rationale_short?: string | null;
+};
+
+export type PatchsetRecord = {
+  patchset_id: string;
+  created_at_iso: string;
+  ops: PatchOp[];
+  page_index: number;
+  rationale_short?: string | null;
+  selected_ids?: string[] | null;
+  diff_summary: {
+    target_id: string;
+    changed_fields: string[];
+    geometry_changed: boolean;
+  }[];
+  results: {
+    target_id: string;
+    applied_font_size_pt?: number | null;
+    overflow?: boolean | null;
+  }[];
+};
+
+export type PatchsetListResponse = {
+  doc_id: string;
+  patchsets: PatchsetRecord[];
+};
+
+export type PatchCommitResponse = {
+  patchset: PatchsetRecord;
+  patch_log: PatchsetRecord[];
+};
+
+export type PatchPlanResponse = {
+  proposed_patchset: {
+    patchset_id: string;
+    ops: PatchOp[];
+    rationale_short: string;
+    page_index: number;
+  };
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 export function downloadUrl(docId: string): string {
   return `${API_BASE}/v1/documents/${docId}/download`;
+}
+
+export function exportPdfUrl(docId: string): string {
+  return `${API_BASE}/v1/export/${docId}`;
 }
 
 export async function uploadDocument(file: File): Promise<DocumentMeta> {
@@ -124,6 +190,14 @@ export async function getIR(docId: string, pageIndex: number): Promise<IRPage> {
   return (await response.json()) as IRPage;
 }
 
+export async function getCompositeIR(docId: string, pageIndex: number): Promise<IRPage> {
+  const response = await fetch(`${API_BASE}/v1/composite/ir/${docId}?page=${pageIndex}`);
+  if (!response.ok) {
+    throw new Error("Failed to load composite IR data");
+  }
+  return (await response.json()) as IRPage;
+}
+
 export async function hitTest(
   docId: string,
   pageIndex: number,
@@ -140,4 +214,60 @@ export async function hitTest(
     throw new Error("Failed to hit-test");
   }
   return (await response.json()) as HitTestResponse;
+}
+
+export async function planPatch(payload: {
+  doc_id: string;
+  page_index: number;
+  selected_ids: string[];
+  user_instruction: string;
+  candidates?: string[];
+}): Promise<PatchPlanResponse> {
+  const response = await fetch(`${API_BASE}/v1/ai/plan_patch`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error("Failed to plan patch");
+  }
+  return (await response.json()) as PatchPlanResponse;
+}
+
+export async function commitPatch(docId: string, patchset: PatchsetInput): Promise<PatchCommitResponse> {
+  const response = await fetch(`${API_BASE}/v1/patch/commit`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      doc_id: docId,
+      patchset
+    })
+  });
+  if (!response.ok) {
+    const payload = await response.json();
+    throw new Error(payload.detail ?? "Failed to commit patch");
+  }
+  return (await response.json()) as PatchCommitResponse;
+}
+
+export async function getPatches(docId: string): Promise<PatchsetListResponse> {
+  const response = await fetch(`${API_BASE}/v1/patches/${docId}`);
+  if (!response.ok) {
+    throw new Error("Failed to load patch history");
+  }
+  return (await response.json()) as PatchsetListResponse;
+}
+
+export async function revertLastPatch(docId: string): Promise<PatchsetListResponse> {
+  const response = await fetch(`${API_BASE}/v1/patch/revert_last?doc_id=${docId}`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    throw new Error("Failed to revert patch");
+  }
+  return (await response.json()) as PatchsetListResponse;
 }
