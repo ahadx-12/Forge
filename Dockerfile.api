@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy only API requirements first (cache-friendly)
+COPY apps/api/requirements.txt /app/requirements.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy API source
+COPY apps/api/src /app/src
+
+ENV PYTHONPATH=src
+
+CMD ["sh", "-c", "uvicorn forge_api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
