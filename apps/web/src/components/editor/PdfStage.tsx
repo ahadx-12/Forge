@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Minus, Plus, RefreshCw } from "lucide-react";
 
-import { downloadUrl } from "@/lib/api";
+import { downloadUrl, getIR } from "@/lib/api";
+import type { IRPage } from "@/lib/api";
+import { useSelectionStore } from "@/lib/state/store";
+import { SelectionLayer } from "@/components/editor/SelectionLayer";
 
 if (typeof window !== "undefined") {
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -19,6 +22,20 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
   const [scale, setScale] = useState(1);
   const [numPages, setNumPages] = useState<number | null>(initialPageCount ?? null);
   const fileUrl = useMemo(() => downloadUrl(docId), [docId]);
+  const cycleCandidate = useSelectionStore((state) => state.cycleCandidate);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Tab") {
+        event.preventDefault();
+        cycleCandidate();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => {
+      window.removeEventListener("keydown", handler);
+    };
+  }, [cycleCandidate]);
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -64,12 +81,7 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
               id={`page-${index + 1}`}
               className="mb-6 flex justify-center"
             >
-              <Page
-                pageNumber={index + 1}
-                scale={scale}
-                renderAnnotationLayer={false}
-                renderTextLayer={false}
-              />
+              <PageWithOverlay docId={docId} pageIndex={index} scale={scale} />
             </div>
           ))}
         </Document>
@@ -118,6 +130,77 @@ export function PdfThumbnails({ docId, pageCount, activePage, onSelect }: PdfThu
           })}
         </div>
       </Document>
+    </div>
+  );
+}
+
+interface PageWithOverlayProps {
+  docId: string;
+  pageIndex: number;
+  scale: number;
+}
+
+function PageWithOverlay({ docId, pageIndex, scale }: PageWithOverlayProps) {
+  const [pageIR, setPageIR] = useState<IRPage | null>(null);
+  const [renderedSize, setRenderedSize] = useState({ width: 0, height: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const setIRPage = useSelectionStore((state) => state.setIRPage);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const page = await getIR(docId, pageIndex);
+        if (cancelled) {
+          return;
+        }
+        setPageIR(page);
+        setIRPage(pageIndex, page);
+      } catch (error) {
+        console.error("Failed to load IR page", error);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, pageIndex, setIRPage]);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setRenderedSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height
+        });
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative inline-block">
+      <Page
+        pageNumber={pageIndex + 1}
+        scale={scale}
+        renderAnnotationLayer={false}
+        renderTextLayer={false}
+      />
+      {pageIR && renderedSize.width > 0 && renderedSize.height > 0 ? (
+        <SelectionLayer
+          docId={docId}
+          pageIndex={pageIndex}
+          page={pageIR}
+          renderedWidth={renderedSize.width}
+          renderedHeight={renderedSize.height}
+        />
+      ) : null}
     </div>
   );
 }
