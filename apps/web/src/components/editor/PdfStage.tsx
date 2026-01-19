@@ -4,11 +4,39 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Minus, Plus, RefreshCw } from "lucide-react";
 
 import { downloadUrl } from "@/lib/api";
+import { getPdfWorkerSrc } from "@/lib/pdfjs";
 import type { IRPage } from "@/lib/api";
 import { useSelectionStore } from "@/lib/state/store";
 import { SelectionLayer } from "@/components/editor/SelectionLayer";
 
 type ReactPdfModule = typeof import("react-pdf");
+
+async function buildPdfLoadErrorMessage(
+  fileUrl: string,
+  error: unknown,
+  label: string
+): Promise<string> {
+  console.error("PDF failed to load", error);
+  try {
+    const response = await fetch(fileUrl, {
+      headers: {
+        Range: "bytes=0-1"
+      }
+    });
+    if (!response.ok) {
+      const bodyText = await response.text();
+      const snippet = bodyText.trim().slice(0, 180);
+      return `${label} (${response.status}) for ${fileUrl}.${snippet ? ` ${snippet}` : ""}`;
+    }
+    return `${label} (${response.status}) for ${fileUrl}. ${
+      error instanceof Error && error.message ? error.message : "Unknown error"
+    }`;
+  } catch (fetchError) {
+    return `${label} for ${fileUrl}. ${
+      fetchError instanceof Error && fetchError.message ? fetchError.message : "Unknown error"
+    }`;
+  }
+}
 
 function useReactPdf() {
   const [module, setModule] = useState<ReactPdfModule | null>(null);
@@ -20,7 +48,7 @@ function useReactPdf() {
         return;
       }
       if (typeof window !== "undefined") {
-        mod.pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+        mod.pdfjs.GlobalWorkerOptions.workerSrc = getPdfWorkerSrc();
       }
       setModule(mod);
     });
@@ -78,33 +106,8 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
   const { Document, Page } = reactPdf;
 
   async function handlePdfLoadError(error: unknown) {
-    console.error("PDF failed to load", error);
-    try {
-      const response = await fetch(fileUrl, {
-        headers: {
-          Range: "bytes=0-1"
-        }
-      });
-      if (!response.ok) {
-        const bodyText = await response.text();
-        const snippet = bodyText.trim().slice(0, 180);
-        setPdfError(
-          `PDF download failed (${response.status}).${snippet ? ` ${snippet}` : ""}`
-        );
-        return;
-      }
-      setPdfError(
-        `PDF download failed (${response.status}). ${
-          error instanceof Error && error.message ? error.message : "Unknown error"
-        }`
-      );
-    } catch (fetchError) {
-      setPdfError(
-        `PDF download failed. ${
-          fetchError instanceof Error && fetchError.message ? fetchError.message : "Unknown error"
-        }`
-      );
-    }
+    const message = await buildPdfLoadErrorMessage(fileUrl, error, "PDF download failed");
+    setPdfError(message);
   }
 
   return (
@@ -148,9 +151,9 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
         <Document
           file={fileUrl}
           onLoadSuccess={(pdf) => setNumPages(pdf.numPages)}
-          onLoadError={handlePdfLoadError}
-          loading={<div className="text-sm text-slate-400">Loading document…</div>}
-        >
+        onLoadError={handlePdfLoadError}
+        loading={<div className="text-sm text-slate-400">Loading document…</div>}
+      >
           {Array.from({ length: numPages ?? 0 }, (_, index) => (
             <div
               key={`page_${index + 1}`}
@@ -204,10 +207,8 @@ export function PdfThumbnails({ docId, pageCount, activePage, onSelect }: PdfThu
         loading={<div className="text-xs text-slate-500">Loading…</div>}
         onLoadError={(error) => {
           console.error("PDF thumbnails failed to load", error);
-          setPdfError(
-            `Thumbnails unavailable. ${
-              error instanceof Error && error.message ? error.message : "Unknown error"
-            }`
+          void buildPdfLoadErrorMessage(fileUrl, error, "Thumbnails unavailable").then(
+            setPdfError
           );
         }}
       >

@@ -6,5 +6,10 @@
     "build": "pnpm --filter ./apps/web build",
     "start": "pnpm --filter ./apps/web start -- -p ${PORT:-3000}",
     "check": "node scripts/no_binaries_check.mjs && pnpm -C apps/web lint && pnpm -C apps/web build && (cd apps/api && PYTHONPATH=src pytest -q)"
+  },
+  "pnpm": {
+    "overrides": {
+      "pdfjs-dist": "4.4.168"
+    }
   }
 }
