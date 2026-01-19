@@ -18,6 +18,12 @@ class StorageDriver(Protocol):
     def get_bytes(self, key: str) -> bytes:
         ...
 
+    def get_bytes_range(self, key: str, start: int, end: int) -> bytes:
+        ...
+
+    def get_size(self, key: str) -> int:
+        ...
+
     def open_stream(self, key: str) -> BytesIO:
         ...
 
@@ -47,6 +53,15 @@ class LocalStorageDriver:
 
     def get_bytes(self, key: str) -> bytes:
         return self._safe_join(key).read_bytes()
+
+    def get_bytes_range(self, key: str, start: int, end: int) -> bytes:
+        path = self._safe_join(key)
+        with path.open("rb") as handle:
+            handle.seek(start)
+            return handle.read(end - start + 1)
+
+    def get_size(self, key: str) -> int:
+        return self._safe_join(key).stat().st_size
 
     def open_stream(self, key: str) -> BytesIO:
         return BytesIO(self.get_bytes(key))
@@ -85,6 +100,30 @@ class S3StorageDriver:
         try:
             response = self.client.get_object(Bucket=self.bucket, Key=self._resolve_key(key))
             return response["Body"].read()
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code in {"NoSuchKey", "404"} or exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                raise FileNotFoundError("Object not found") from exc
+            raise
+
+    def get_bytes_range(self, key: str, start: int, end: int) -> bytes:
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=self._resolve_key(key),
+                Range=f"bytes={start}-{end}",
+            )
+            return response["Body"].read()
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code in {"NoSuchKey", "404"} or exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                raise FileNotFoundError("Object not found") from exc
+            raise
+
+    def get_size(self, key: str) -> int:
+        try:
+            response = self.client.head_object(Bucket=self.bucket, Key=self._resolve_key(key))
+            return int(response["ContentLength"])
         except ClientError as exc:
             error_code = exc.response.get("Error", {}).get("Code")
             if error_code in {"NoSuchKey", "404"} or exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
