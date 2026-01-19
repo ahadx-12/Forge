@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/copy-pdf-worker.mjs && next build && node scripts/check-pdf-worker.mjs",
     "start": "next start -p $PORT",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "node scripts/copy-pdf-worker.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",
