@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  pdfjs-dist: 4.4.168
+
 importers:
 
   .: {}
@@ -23,8 +26,8 @@ importers:
         specifier: ^14.2.35
         version: 14.2.35(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       pdfjs-dist:
-        specifier: 4.2.67
-        version: 4.2.67
+        specifier: 4.4.168
+        version: 4.4.168
       react:
         specifier: 18.2.0
         version: 18.2.0
@@ -1687,10 +1690,6 @@ packages:
   path2d@0.2.2:
     resolution: {integrity: sha512-+vnG6S4dYcYxZd+CZxzXCNKdELYZSKfohrk98yajCo1PtRoDgCTrrwOvK1GT0UoAdVszagDVllQc0U1vaX4NUQ==}
     engines: {node: '>=6'}
-
-  pdfjs-dist@4.2.67:
-    resolution: {integrity: sha512-rJmuBDFpD7cqC8WIkQUEClyB4UAH05K4AsyewToMTp2gSy3Rrx8c1ydAVqlJlGv3yZSOrhEERQU/4ScQQFlLHA==}
-    engines: {node: '>=18'}
 
   pdfjs-dist@4.4.168:
     resolution: {integrity: sha512-MbkAjpwka/dMHaCfQ75RY1FXX3IewBVu6NGZOcxerRFlaBiIkZmUoR0jotX5VUzYZEXAGzSFtknWs5xRKliXPA==}
@@ -3968,14 +3967,6 @@ snapshots:
 
   path2d@0.2.2:
     optional: true
-
-  pdfjs-dist@4.2.67:
-    optionalDependencies:
-      canvas: 2.11.2
-      path2d: 0.2.2
-    transitivePeerDependencies:
-      - encoding
-      - supports-color
 
   pdfjs-dist@4.4.168:
     optionalDependencies:
