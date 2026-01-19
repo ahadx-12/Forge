@@ -11,33 +11,51 @@ from forge_api.core.ir.model import BBox, PageIR, PathPrimitive, PathStyle, Text
 ROUND_PRECISION = 3
 
 
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _round(value: float | int) -> float | int:
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool):
         return value
-    return round(float(value), ROUND_PRECISION)
+    return round(_coerce_float(value), ROUND_PRECISION)
 
 
 def _round_optional(value: float | int | None) -> float | int | None:
     if value is None:
         return None
-    return _round(value)
+    try:
+        return _round(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_color(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, (list, tuple)):
-        return [_round(float(channel)) for channel in value]
+        return [_round(_coerce_float(channel)) for channel in value]
     return value
 
 
-def _normalize_bbox(bbox: list[float] | tuple[float, float, float, float]) -> BBox:
+def _normalize_bbox(bbox: list[float | int | None] | tuple[float | int | None, float | int | None, float | int | None, float | int | None]) -> BBox:
+    if bbox is None or len(bbox) < 4:
+        return (0.0, 0.0, 0.0, 0.0)
     x0, y0, x1, y1 = bbox
     return (
-        _round(float(x0)),
-        _round(float(y0)),
-        _round(float(x1)),
-        _round(float(y1)),
+        _round(_coerce_float(x0)),
+        _round(_coerce_float(y0)),
+        _round(_coerce_float(x1)),
+        _round(_coerce_float(y1)),
     )
 
 

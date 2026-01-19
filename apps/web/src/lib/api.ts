@@ -144,7 +144,24 @@ export type PatchPlanResponse = {
 
 export type ExportMaskMode = "SOLID" | "AUTO_BG";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
+const API_BASE = (RAW_API_BASE && RAW_API_BASE.trim().length > 0 ? RAW_API_BASE : "http://localhost:8000")
+  .replace(/\/+$/, "");
+
+async function readErrorDetail(response: Response): Promise<string | null> {
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload.detail === "string") {
+      return payload.detail;
+    }
+    if (payload && typeof payload.error === "string") {
+      return payload.error;
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
+}
 
 export function downloadUrl(docId: string): string {
   return `${API_BASE}/v1/documents/${docId}/download`;
@@ -166,7 +183,8 @@ export async function uploadDocument(file: File): Promise<DocumentMeta> {
     body: formData
   });
   if (!response.ok) {
-    throw new Error("Upload failed");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Upload failed: ${detail}` : "Upload failed");
   }
   const payload = await response.json();
   return payload.document as DocumentMeta;
@@ -175,7 +193,8 @@ export async function uploadDocument(file: File): Promise<DocumentMeta> {
 export async function getDocumentMeta(docId: string): Promise<DocumentMeta> {
   const response = await fetch(`${API_BASE}/v1/documents/${docId}`);
   if (!response.ok) {
-    throw new Error("Failed to load document metadata");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to load document metadata: ${detail}` : "Failed to load document metadata");
   }
   return (await response.json()) as DocumentMeta;
 }
@@ -183,7 +202,8 @@ export async function getDocumentMeta(docId: string): Promise<DocumentMeta> {
 export async function getDecode(docId: string): Promise<DecodePayload> {
   const response = await fetch(`${API_BASE}/v1/decode/${docId}`);
   if (!response.ok) {
-    throw new Error("Failed to load decode data");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to load decode data: ${detail}` : "Failed to load decode data");
   }
   return (await response.json()) as DecodePayload;
 }
@@ -191,7 +211,8 @@ export async function getDecode(docId: string): Promise<DecodePayload> {
 export async function getIR(docId: string, pageIndex: number): Promise<IRPage> {
   const response = await fetch(`${API_BASE}/v1/ir/${docId}?page=${pageIndex}`);
   if (!response.ok) {
-    throw new Error("Failed to load IR data");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to load IR data: ${detail}` : "Failed to load IR data");
   }
   return (await response.json()) as IRPage;
 }
@@ -199,7 +220,8 @@ export async function getIR(docId: string, pageIndex: number): Promise<IRPage> {
 export async function getCompositeIR(docId: string, pageIndex: number): Promise<IRPage> {
   const response = await fetch(`${API_BASE}/v1/composite/ir/${docId}?page=${pageIndex}`);
   if (!response.ok) {
-    throw new Error("Failed to load composite IR data");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to load composite IR data: ${detail}` : "Failed to load composite IR data");
   }
   return (await response.json()) as IRPage;
 }
@@ -217,7 +239,8 @@ export async function hitTest(
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
-    throw new Error("Failed to hit-test");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to hit-test: ${detail}` : "Failed to hit-test");
   }
   return (await response.json()) as HitTestResponse;
 }
@@ -237,7 +260,8 @@ export async function planPatch(payload: {
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
-    throw new Error("Failed to plan patch");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to plan patch: ${detail}` : "Failed to plan patch");
   }
   return (await response.json()) as PatchPlanResponse;
 }
@@ -254,8 +278,8 @@ export async function commitPatch(docId: string, patchset: PatchsetInput): Promi
     })
   });
   if (!response.ok) {
-    const payload = await response.json();
-    throw new Error(payload.detail ?? "Failed to commit patch");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to commit patch: ${detail}` : "Failed to commit patch");
   }
   return (await response.json()) as PatchCommitResponse;
 }
@@ -263,7 +287,8 @@ export async function commitPatch(docId: string, patchset: PatchsetInput): Promi
 export async function getPatches(docId: string): Promise<PatchsetListResponse> {
   const response = await fetch(`${API_BASE}/v1/patches/${docId}`);
   if (!response.ok) {
-    throw new Error("Failed to load patch history");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to load patch history: ${detail}` : "Failed to load patch history");
   }
   return (await response.json()) as PatchsetListResponse;
 }
@@ -273,7 +298,8 @@ export async function revertLastPatch(docId: string): Promise<PatchsetListRespon
     method: "POST"
   });
   if (!response.ok) {
-    throw new Error("Failed to revert patch");
+    const detail = await readErrorDetail(response);
+    throw new Error(detail ? `Failed to revert patch: ${detail}` : "Failed to revert patch");
   }
   return (await response.json()) as PatchsetListResponse;
 }

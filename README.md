@@ -41,79 +41,80 @@ python scripts/smoke.py
 
 The script generates a PDF at runtime, uploads it, hit-tests, commits a patch, composites IR, and exports a PDF.
 
-## Deploy to Railway (Monorepo, two services)
+## Deployment on Railway (Monorepo, two services)
 
-1. Create a new Railway project and connect this GitHub repository.
-2. Create **two services** from the same repo.
+Create a new Railway project, connect this repo, and create **two services** (Web + API) from the same repository.
 
-### Service 1: API
+### Recommended Railway service configuration
 
-- **Root Directory**: `apps/api`
-- **Build**: Railway detects the `Dockerfile`.
-- **Start Command**: Use the Dockerfile entrypoint (do not override).
+**API service (FastAPI)**
 
-**Required env vars**
+- **Service Root Dir**: `apps/api`
+- **Build Command**: `python -m pip install -r requirements.txt`
+- **Start Command**: `sh -c "uvicorn forge_api.main:app --host 0.0.0.0 --port ${PORT:-8000}"`
+
+**Web service (Next.js)**
+
+- **Service Root Dir**: `apps/web`
+- **Build Command**: `pnpm install --frozen-lockfile && pnpm --filter ./apps/web build`
+- **Start Command**: `pnpm --filter ./apps/web start -- -p ${PORT:-3000}`
+
+If Railway builds from the repo root, the root `package.json` includes `build` and `start` scripts that target the Web app.
+
+### API environment variables
+
+**Required**
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `WEB_ORIGIN` | `https://<your-web-service-url>` | Comma-separated allowed origins. Required in production. |
 | `FORGE_STORAGE_DRIVER` | `s3` or `local` | Storage backend selection. |
-| `FORGE_STORAGE_LOCAL_DIR` | `.data` | Used when `FORGE_STORAGE_DRIVER=local`. |
+| `WEB_ORIGIN` | `https://<your-web-service-url>` | Comma-separated allowed origins for CORS. Required in production. |
 | `FORGE_MAX_UPLOAD_MB` | `25` | Upload limit in MB. |
 | `FORGE_EXPORT_MASK_MODE` | `AUTO_BG` | Default export mask mode. |
 
-**S3-only env vars**
+**S3/R2 storage**
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `FORGE_S3_BUCKET` | `forge-prod` | Required for S3. |
-| `FORGE_S3_REGION` | `us-east-1` | Optional. |
-| `FORGE_S3_ACCESS_KEY` | `...` | Required for S3. |
-| `FORGE_S3_SECRET_KEY` | `...` | Required for S3. |
-| `FORGE_S3_ENDPOINT` | `https://<r2-endpoint>` | Optional for R2/MinIO. |
-| `FORGE_S3_PREFIX` | `forge/` | Optional prefix. |
+| `FORGE_S3_BUCKET` | `forge` | Required when `FORGE_STORAGE_DRIVER=s3`. |
+| `FORGE_S3_ENDPOINT` | `https://<accountid>.r2.cloudflarestorage.com` | Cloudflare R2 endpoint format. |
+| `FORGE_S3_ACCESS_KEY` | `***` | Required for S3. |
+| `FORGE_S3_SECRET_KEY` | `***` | Required for S3. |
+| `FORGE_S3_REGION` | `auto` | Use `auto` for R2 or leave blank if your runtime ignores it. |
+| `FORGE_S3_PREFIX` | `optional/prefix` | Optional key prefix (can be empty). |
 
-**Optional env vars**
+**Local storage**
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | `sk-...` | Only for AI patch planning (server-side only). |
+| `FORGE_STORAGE_LOCAL_DIR` | `.data` | Used when `FORGE_STORAGE_DRIVER=local`. |
+
+**Optional**
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | `***` | Only for AI patch planning (server-side only). |
 | `OPENAI_MODEL` | `gpt-5.2` | Optional override. |
 | `FORGE_PATCH_STORE_DRIVER` | `s3` | Defaults to storage driver. |
 | `FORGE_EXPORT_MASK_SOLID_COLOR` | `255,255,255` | RGB for solid mask fill. |
 | `FORGE_BUILD_VERSION` | `2024.10.01` | Shown in `/health`. |
 | `LOG_LEVEL` | `INFO` | Logging verbosity. |
-| `FORGE_ENV` | `production` | Controls CORS defaults. |
+| `FORGE_ENV` | `production` | When set to `production`, CORS is disabled unless `WEB_ORIGIN` is configured. |
 
-### Service 2: Web
-
-- **Root Directory**: `apps/web`
-- **Build**: Railway detects the `Dockerfile`.
-- **Start Command**: Use the Dockerfile entrypoint (do not override).
-
-**Env vars**
+### Web environment variables
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `NEXT_PUBLIC_API_BASE_URL` | `https://<your-api-service-url>` | API base URL for the browser. |
+| `NEXT_PUBLIC_API_BASE_URL` | `https://<your-api-service-url>` | API base URL used by the browser (no trailing slash). |
 
-### Optional non-Docker Railway commands
+### CORS guidance
 
-If you choose not to use the Dockerfiles:
+- `WEB_ORIGIN` accepts a comma-separated list of allowed origins (e.g. `https://forge.app,https://staging.forge.app`).
+- In production (`FORGE_ENV=production`), leave `WEB_ORIGIN` empty only if you intend to disable browser access.
 
-**API**
+### Verification after deploy
 
-- Build: `pip install -r requirements.txt`
-- Start: `uvicorn forge_api.main:app --host 0.0.0.0 --port $PORT`
-
-**Web**
-
-- Build: `pnpm install && pnpm build`
-- Start: `pnpm start` (or `next start -p $PORT`)
-
-### Notes
-
-- Each service uses its own Dockerfile, and Railway injects the `PORT` environment variable automatically.
-- CORS is controlled by `WEB_ORIGIN` on the API; it must match the deployed Web URL.
-- The OpenAI key is required only for AI planning endpoints and stays server-side in the API service.
-- The `pnpm check` script includes a no-binaries guard to keep the repo free of PDFs/images/fonts.
+1. Open the Web service URL and upload a PDF on the dashboard.
+2. Confirm the app redirects to `/editor/{docId}`.
+3. Confirm the editor loads the document metadata and decoded pages.
+4. Open the API `/health` endpoint to verify storage driver and environment settings.

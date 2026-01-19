@@ -33,7 +33,13 @@ def _to_rgb(color) -> tuple[float, float, float]:
         b = (color & 0xFF) / 255
         return (r, g, b)
     if isinstance(color, (list, tuple)):
-        return (float(color[0]), float(color[1]), float(color[2]))
+        def _channel(value: object) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        return (_channel(color[0]), _channel(color[1]), _channel(color[2]))
     return (0.0, 0.0, 0.0)
 
 
