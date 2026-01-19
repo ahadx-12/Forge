@@ -35,7 +35,11 @@ export default function EditorPage() {
         setActivePage(1);
       } catch (err) {
         if (!cancelled) {
-          setError("Unable to load document. Please return to dashboard and retry.");
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : "We could not load the document metadata or decode data.";
+          setError(`Unable to open this document. ${message} Return to the dashboard and retry.`);
         }
       }
     }

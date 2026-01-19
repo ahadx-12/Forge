@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,18 +10,54 @@ import fitz
 from forge_api.services.storage import get_storage
 
 
-def _round(value: float | int) -> float | int:
-    if isinstance(value, int):
+logger = logging.getLogger("forge_api.decode")
+
+
+def _coerce_float(value: Any, default: float, doc_id: str, field: str) -> float:
+    if value is None:
+        logger.warning("doc_id=%s field=%s missing numeric value; defaulting to %.3f", doc_id, field, default)
+        return default
+    if isinstance(value, bool):
+        logger.warning("doc_id=%s field=%s invalid bool value=%r; defaulting to %.3f", doc_id, field, value, default)
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("doc_id=%s field=%s invalid numeric value=%r; defaulting to %.3f", doc_id, field, value, default)
+        return default
+
+
+def _round(value: Any, doc_id: str, field: str, default: float = 0.0) -> float | int:
+    if isinstance(value, int) and not isinstance(value, bool):
         return value
-    return round(float(value), 3)
+    return round(_coerce_float(value, default, doc_id, field), 3)
 
 
-def _rect_to_list(rect: fitz.Rect) -> list[float]:
-    return [_round(rect.x0), _round(rect.y0), _round(rect.x1), _round(rect.y1)]
+def _rect_to_list(rect: fitz.Rect, doc_id: str, field: str) -> list[float]:
+    return [
+        _round(rect.x0, doc_id, f"{field}.x0"),
+        _round(rect.y0, doc_id, f"{field}.y0"),
+        _round(rect.x1, doc_id, f"{field}.x1"),
+        _round(rect.y1, doc_id, f"{field}.y1"),
+    ]
 
 
-def _normalize_bbox(bbox: list[float] | tuple[float, float, float, float]) -> list[float]:
-    return [_round(float(bbox[0])), _round(float(bbox[1])), _round(float(bbox[2])), _round(float(bbox[3]))]
+def _normalize_bbox(
+    bbox: list[float | int | None] | tuple[float | int | None, float | int | None, float | int | None, float | int | None],
+    doc_id: str,
+    field: str,
+) -> list[float]:
+    if bbox is None or len(bbox) < 4:
+        logger.warning("doc_id=%s field=%s invalid bbox=%r; defaulting to zeros", doc_id, field, bbox)
+        return [0.0, 0.0, 0.0, 0.0]
+    return [
+        _round(bbox[0], doc_id, f"{field}.x0"),
+        _round(bbox[1], doc_id, f"{field}.y0"),
+        _round(bbox[2], doc_id, f"{field}.x1"),
+        _round(bbox[3], doc_id, f"{field}.y1"),
+    ]
 
 
 def _sort_key(item: dict[str, Any]) -> tuple:
@@ -65,10 +102,10 @@ def decode_document(doc_id: str) -> dict[str, Any]:
                         page_items.append(
                             {
                                 "kind": "text",
-                                "bbox": _normalize_bbox(span.get("bbox")),
+                                "bbox": _normalize_bbox(span.get("bbox"), doc_id, "span.bbox"),
                                 "text": text,
                                 "font": span.get("font"),
-                                "size": _round(span.get("size", 0.0)),
+                                "size": _round(span.get("size", 0.0), doc_id, "span.size"),
                                 "color": span.get("color"),
                             }
                         )
@@ -80,8 +117,8 @@ def decode_document(doc_id: str) -> dict[str, Any]:
                 page_items.append(
                     {
                         "kind": "drawing",
-                        "bbox": _rect_to_list(rect),
-                        "width": _round(drawing.get("width", 0.0)),
+                        "bbox": _rect_to_list(rect, doc_id, "drawing.rect"),
+                        "width": _round(drawing.get("width", 0.0), doc_id, "drawing.width"),
                         "color": drawing.get("color"),
                         "fill": drawing.get("fill"),
                     }
@@ -91,8 +128,8 @@ def decode_document(doc_id: str) -> dict[str, Any]:
             pages.append(
                 {
                     "index": index,
-                    "width_pt": _round(page.rect.width),
-                    "height_pt": _round(page.rect.height),
+                    "width_pt": _round(page.rect.width, doc_id, "page.width_pt"),
+                    "height_pt": _round(page.rect.height, doc_id, "page.height_pt"),
                     "rotation": page.rotation,
                     "items": page_items,
                 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from forge_api.services import decode_pdf
 from tests.pdf_factory import make_contract_pdf_bytes, make_drawing_pdf_bytes
 
 
@@ -37,3 +38,13 @@ def test_decode_contract_pdf(client: TestClient) -> None:
     assert payload["page_count"] == 1
     page = payload["pages"][0]
     assert any(item["kind"] == "text" for item in page["items"])
+
+
+def test_decode_round_handles_none() -> None:
+    rounded = decode_pdf._round(None, "doc-123", "span.size")
+    assert rounded == 0.0
+
+
+def test_decode_normalize_bbox_handles_none_values() -> None:
+    bbox = decode_pdf._normalize_bbox([None, 10.5, None, 20.25], "doc-123", "span.bbox")
+    assert bbox == [0.0, 10.5, 0.0, 20.25]
