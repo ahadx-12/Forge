@@ -97,6 +97,7 @@ class PatchPlanRequest(BaseModel):
 
 
 class PatchProposal(BaseModel):
+    schema_version: str = "v1"
     patchset_id: str
     ops: list[PatchOp]
     rationale_short: str

@@ -101,6 +101,23 @@ If Railway builds from the repo root, the root `package.json` includes `build` a
 | `LOG_LEVEL` | `INFO` | Logging verbosity. |
 | `FORGE_ENV` | `production` | When set to `production`, CORS is disabled unless `WEB_ORIGIN` is configured. |
 
+### AI patch planning configuration + error codes
+
+AI patch planning runs **only** in `apps/api`. In production you must set:
+
+- `OPENAI_API_KEY` (required)
+- `OPENAI_MODEL` (optional override, defaults to `gpt-5.2`)
+
+If AI is misconfigured or upstream errors occur, the API responds with structured JSON:
+
+| HTTP | `error` code | Meaning |
+| --- | --- | --- |
+| 503 | `ai_not_configured` | Missing/invalid `OPENAI_API_KEY`. |
+| 400 | `invalid_model` | Invalid `OPENAI_MODEL` (check model name). |
+| 502 | `ai_rate_limited` / `ai_timeout` / `ai_connection_error` / `ai_upstream_error` | OpenAI request failed (retryable). |
+| 400 | `missing_selection` | AI planning request missing selection/candidates. |
+| 409 | `patch_target_not_found` | Patch commit target no longer exists. |
+
 ### Web environment variables
 
 | Variable | Example | Notes |

@@ -31,5 +31,6 @@ def test_ai_plan_patch_schema(monkeypatch, client, upload_pdf):
     response = client.post("/v1/ai/plan_patch", json=payload)
     assert response.status_code == 200
     data = response.json()["proposed_patchset"]
+    assert data["schema_version"] == "v1"
     assert data["ops"][0]["target_id"] == target["id"]
     assert data["page_index"] == 0
