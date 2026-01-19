@@ -180,14 +180,28 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     await get().previewComposite(docId, pageIndex);
   },
   proposePatch: async (docId, instruction) => {
-    const { selectedId, activePageIndex } = get();
+    const { selectedId, activePageIndex, basePages } = get();
     if (!selectedId || activePageIndex === null) {
       throw new Error("Select a primitive first");
+    }
+    const basePage = basePages[activePageIndex];
+    const selectedPrimitive = basePage?.primitives.find((primitive) => primitive.id === selectedId) ?? null;
+    if (!selectedPrimitive) {
+      throw new Error("Selected primitive not found");
     }
     const response = await planPatch({
       doc_id: docId,
       page_index: activePageIndex,
       selected_ids: [selectedId],
+      selected_primitives: [
+        {
+          id: selectedPrimitive.id,
+          kind: selectedPrimitive.kind,
+          bbox: selectedPrimitive.bbox,
+          text: selectedPrimitive.text ?? null,
+          style: selectedPrimitive.style
+        }
+      ],
       user_instruction: instruction
     });
     set({ pendingProposal: response.proposed_patchset });

@@ -120,7 +120,9 @@ export type PatchsetRecord = {
     target_id: string;
     applied_font_size_pt?: number | null;
     overflow?: boolean | null;
+    did_not_fit?: boolean | null;
   }[];
+  warnings?: string[];
 };
 
 export type PatchsetListResponse = {
@@ -151,22 +153,22 @@ const API_BASE = (RAW_API_BASE && RAW_API_BASE.trim().length > 0 ? RAW_API_BASE 
 
 async function readErrorDetail(
   response: Response
-): Promise<{ message: string | null; code: string | null }> {
+): Promise<{ message: string | null; code: string | null; request_id: string | null }> {
   try {
     const payload = await response.json();
     if (payload && typeof payload.detail === "string") {
-      return { message: payload.detail, code: payload.error ?? null };
+      return { message: payload.detail, code: payload.error ?? null, request_id: payload.request_id ?? null };
     }
     if (payload && typeof payload.message === "string") {
-      return { message: payload.message, code: payload.error ?? null };
+      return { message: payload.message, code: payload.error ?? null, request_id: payload.request_id ?? null };
     }
     if (payload && typeof payload.error === "string") {
-      return { message: payload.error, code: payload.error };
+      return { message: payload.error, code: payload.error, request_id: payload.request_id ?? null };
     }
   } catch (error) {
-    return { message: null, code: null };
+    return { message: null, code: null, request_id: null };
   }
-  return { message: null, code: null };
+  return { message: null, code: null, request_id: null };
 }
 
 export function apiUrl(path: string): string {
@@ -284,6 +286,13 @@ export async function planPatch(payload: {
   selected_ids: string[];
   user_instruction: string;
   candidates?: string[];
+  selected_primitives?: {
+    id: string;
+    kind: "text" | "path";
+    bbox: number[];
+    text?: string | null;
+    style?: Record<string, unknown>;
+  }[];
 }): Promise<PatchPlanResponse> {
   const response = await fetch(apiUrl("/v1/ai/plan_patch"), {
     method: "POST",
@@ -294,7 +303,9 @@ export async function planPatch(payload: {
   });
   if (!response.ok) {
     const detail = await readErrorDetail(response);
-    const suffix = [response.status, detail.code].filter(Boolean).join(" ");
+    const suffix = [response.status, detail.code, detail.request_id && `request_id=${detail.request_id}`]
+      .filter(Boolean)
+      .join(" ");
     throw new Error(
       detail.message ? `Failed to plan patch (${suffix}): ${detail.message}` : `Failed to plan patch (${suffix})`
     );

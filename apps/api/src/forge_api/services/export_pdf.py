@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+import logging
 
 import fitz
 
 from forge_api.core.patch.apply import apply_ops_to_page
+from forge_api.core.patch.fonts import DEFAULT_FONT, normalize_font_name
 from forge_api.schemas.ir import IRPage
 from forge_api.schemas.patch import PatchOp
 from forge_api.services.ir_pdf import get_page_ir
@@ -15,6 +17,7 @@ from forge_api.services.storage import get_storage
 
 
 DEFAULT_PADDING_PT = 1.5
+logger = logging.getLogger("forge_api")
 
 
 @dataclass(frozen=True)
@@ -91,19 +94,38 @@ def _sample_background_color(page: fitz.Page, rect: fitz.Rect) -> tuple[float, f
         return None
 
 
-def _draw_text(page: fitz.Page, primitive, bbox: list[float]) -> None:
-    font_name = primitive.style.get("font") or "helv"
+def _draw_text(page: fitz.Page, primitive, bbox: list[float], doc_id: str, page_index: int) -> None:
+    raw_font = primitive.style.get("font")
+    font_name = normalize_font_name(raw_font) or DEFAULT_FONT
     font_size = float(primitive.style.get("size") or 12)
     color = _to_rgb(primitive.style.get("color"))
     x0, y0, x1, y1 = bbox
-    page.insert_textbox(
-        fitz.Rect(x0, y0, x1, y1),
-        primitive.text or "",
-        fontname=font_name,
-        fontsize=font_size,
-        color=color,
-        align=fitz.TEXT_ALIGN_LEFT,
-    )
+    try:
+        page.insert_textbox(
+            fitz.Rect(x0, y0, x1, y1),
+            primitive.text or "",
+            fontname=font_name,
+            fontsize=font_size,
+            color=color,
+            align=fitz.TEXT_ALIGN_LEFT,
+        )
+    except (RuntimeError, ValueError) as exc:
+        logger.warning(
+            "Unsupported font fallback doc_id=%s page_index=%s primitive_id=%s font=%s error=%s",
+            doc_id,
+            page_index,
+            primitive.id,
+            raw_font,
+            exc.__class__.__name__,
+        )
+        page.insert_textbox(
+            fitz.Rect(x0, y0, x1, y1),
+            primitive.text or "",
+            fontname=DEFAULT_FONT,
+            fontsize=font_size,
+            color=color,
+            align=fitz.TEXT_ALIGN_LEFT,
+        )
 
 
 def _draw_path(page: fitz.Page, primitive, bbox: list[float]) -> None:
@@ -171,7 +193,7 @@ def export_pdf_with_overlays(
                 if primitive.kind == "path":
                     _draw_path(page, primitive, primitive.bbox)
                 elif primitive.kind == "text":
-                    _draw_text(page, primitive, primitive.bbox)
+                    _draw_text(page, primitive, primitive.bbox, doc_id, page_index)
 
         buffer = BytesIO()
         doc.save(buffer)

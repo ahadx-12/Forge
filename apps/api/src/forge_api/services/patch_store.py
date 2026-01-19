@@ -36,6 +36,7 @@ def append_patchset(
     selected_ids: list[str] | None,
     diff_summary: list[PatchDiffEntry],
     results: list[PatchOpResult],
+    warnings: list[str] | None = None,
 ) -> PatchsetRecord:
     patchsets = load_patch_log(doc_id)
     record = PatchsetRecord(
@@ -47,6 +48,7 @@ def append_patchset(
         selected_ids=selected_ids,
         diff_summary=diff_summary,
         results=results,
+        warnings=warnings or [],
     )
     patchsets.append(record)
     save_patch_log(doc_id, patchsets)

@@ -6,14 +6,14 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
-from forge_api.core.errors import AIError, UpstreamAIError
+from forge_api.core.errors import AIError
 from forge_api.schemas.patch import PatchOp, PatchPlanRequest, PatchProposal
 from forge_api.services.openai_client import OpenAIClient
 
 
 SYSTEM_PROMPT = """You are a patch planner for Forge. Output JSON only.
 Rules:
-- Only refer to IDs in selected_ids or candidates.
+- Only refer to IDs in selected_ids. Do not use candidates or any other IDs.
 - Never invent new IDs or geometry.
 - Only output ops with op=\"set_style\" or op=\"replace_text\".
 - For set_style, you may set stroke_color, stroke_width_pt, fill_color, opacity.
@@ -57,8 +57,6 @@ def _validate_ops(payload: dict[str, Any], allowed_ids: set[str], page_index: in
 
 def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> PatchProposal:
     allowed_ids = set(request.selected_ids)
-    if request.candidates:
-        allowed_ids.update(request.candidates)
     if not allowed_ids:
         raise AIError(
             status_code=400,
@@ -67,17 +65,20 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
             details={"doc_id": request.doc_id, "page_index": request.page_index},
         )
 
-    selection_context = [
-        {
-            "id": primitive["id"],
-            "kind": primitive["kind"],
-            "bbox": primitive["bbox"],
-            "text": primitive.get("text"),
-            "style": primitive.get("style"),
-        }
-        for primitive in primitives
-        if primitive["id"] in allowed_ids
-    ]
+    if request.selected_primitives:
+        selection_context = request.selected_primitives
+    else:
+        selection_context = [
+            {
+                "id": primitive["id"],
+                "kind": primitive["kind"],
+                "bbox": primitive["bbox"],
+                "text": primitive.get("text"),
+                "style": primitive.get("style"),
+            }
+            for primitive in primitives
+            if primitive["id"] in allowed_ids
+        ]
 
     prompt = {
         "doc_id": request.doc_id,
@@ -106,9 +107,9 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
             payload = json.loads(_extract_json(retry_text))
             return _validate_ops(payload, allowed_ids, request.page_index)
         except Exception as retry_exc:
-            raise UpstreamAIError(
-                status_code=502,
-                code="ai_invalid_response",
+            raise AIError(
+                status_code=400,
+                code="ai_invalid_output",
                 message="AI returned an invalid patch plan",
                 details={"error": str(exc), "retry_error": str(retry_exc)},
             ) from retry_exc
