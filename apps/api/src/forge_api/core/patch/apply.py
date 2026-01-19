@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import fitz
-
+from forge_api.core.patch.fonts import safe_get_text_length
 from forge_api.schemas.ir import IRPage, IRPrimitive
 from forge_api.schemas.patch import PatchOp, PatchOpResult, PatchReplaceText, PatchSetStyle
 
@@ -18,31 +17,58 @@ class TextFitResult:
     overflow: bool
 
 
-def _measure_text_width(text: str, font_name: str | None, font_size: float) -> float:
-    try:
-        return fitz.get_text_length(text, fontname=font_name or "helv", fontsize=font_size)
-    except RuntimeError:
-        return fitz.get_text_length(text, fontname="helv", fontsize=font_size)
+def _measure_text_width(
+    text: str,
+    font_name: str | None,
+    font_size: float,
+    doc_id: str,
+    page_index: int,
+    primitive_id: str,
+) -> float:
+    return safe_get_text_length(
+        text,
+        font_name,
+        font_size,
+        doc_id=doc_id,
+        page_index=page_index,
+        primitive_id=primitive_id,
+    )
 
 
-def _fits_bbox(text: str, font_name: str | None, font_size: float, bbox: list[float]) -> bool:
-    width = _measure_text_width(text, font_name, font_size)
+def _fits_bbox(
+    text: str,
+    font_name: str | None,
+    font_size: float,
+    bbox: list[float],
+    doc_id: str,
+    page_index: int,
+    primitive_id: str,
+) -> bool:
+    width = _measure_text_width(text, font_name, font_size, doc_id, page_index, primitive_id)
     max_width = bbox[2] - bbox[0]
     max_height = bbox[3] - bbox[1]
     return width <= max_width and font_size <= max_height
 
 
-def fit_text_to_box(text: str, font_name: str | None, font_size: float, bbox: list[float]) -> TextFitResult:
-    if _fits_bbox(text, font_name, font_size, bbox):
+def fit_text_to_box(
+    text: str,
+    font_name: str | None,
+    font_size: float,
+    bbox: list[float],
+    doc_id: str,
+    page_index: int,
+    primitive_id: str,
+) -> TextFitResult:
+    if _fits_bbox(text, font_name, font_size, bbox, doc_id, page_index, primitive_id):
         return TextFitResult(font_size=font_size, overflow=False)
 
     next_size = font_size
     while next_size - FONT_SIZE_STEP_PT >= MIN_FONT_SIZE_PT:
         next_size = round(next_size - FONT_SIZE_STEP_PT, 2)
-        if _fits_bbox(text, font_name, next_size, bbox):
+        if _fits_bbox(text, font_name, next_size, bbox, doc_id, page_index, primitive_id):
             return TextFitResult(font_size=next_size, overflow=False)
 
-    overflow = not _fits_bbox(text, font_name, MIN_FONT_SIZE_PT, bbox)
+    overflow = not _fits_bbox(text, font_name, MIN_FONT_SIZE_PT, bbox, doc_id, page_index, primitive_id)
     return TextFitResult(font_size=MIN_FONT_SIZE_PT, overflow=overflow)
 
 
@@ -57,25 +83,37 @@ def _apply_set_style(primitive: IRPrimitive, op: PatchSetStyle) -> None:
         primitive.style["opacity"] = op.opacity
 
 
-def _apply_replace_text(primitive: IRPrimitive, op: PatchReplaceText) -> PatchOpResult:
+def _apply_replace_text(doc_id: str, page_index: int, primitive: IRPrimitive, op: PatchReplaceText) -> PatchOpResult:
     primitive.text = op.new_text
     font_name = primitive.style.get("font") if isinstance(primitive.style, dict) else None
     font_size = float(primitive.style.get("size") or 0.0)
 
     if op.policy == "FIT_IN_BOX":
-        fit = fit_text_to_box(op.new_text, font_name, font_size, primitive.bbox)
+        fit = fit_text_to_box(op.new_text, font_name, font_size, primitive.bbox, doc_id, page_index, primitive.id)
         primitive.style["size"] = fit.font_size
         primitive.patch_meta = {
             "overflow": fit.overflow,
             "fitted_font_size": fit.font_size,
+            "did_not_fit": fit.overflow,
         }
-        return PatchOpResult(target_id=primitive.id, applied_font_size_pt=fit.font_size, overflow=fit.overflow)
+        return PatchOpResult(
+            target_id=primitive.id,
+            applied_font_size_pt=fit.font_size,
+            overflow=fit.overflow,
+            did_not_fit=fit.overflow,
+        )
 
-    overflow = not _fits_bbox(op.new_text, font_name, font_size, primitive.bbox)
+    overflow = not _fits_bbox(op.new_text, font_name, font_size, primitive.bbox, doc_id, page_index, primitive.id)
     primitive.patch_meta = {
         "overflow": overflow,
+        "did_not_fit": overflow,
     }
-    return PatchOpResult(target_id=primitive.id, applied_font_size_pt=font_size, overflow=overflow)
+    return PatchOpResult(
+        target_id=primitive.id,
+        applied_font_size_pt=font_size,
+        overflow=overflow,
+        did_not_fit=overflow,
+    )
 
 
 def apply_ops_to_page(page: IRPage, ops: list[PatchOp]) -> tuple[IRPage, list[PatchOpResult]]:
@@ -91,6 +129,6 @@ def apply_ops_to_page(page: IRPage, ops: list[PatchOp]) -> tuple[IRPage, list[Pa
             _apply_set_style(target, op)
             results.append(PatchOpResult(target_id=target.id))
         elif op.op == "replace_text" and target.kind == "text":
-            results.append(_apply_replace_text(target, op))
+            results.append(_apply_replace_text(patched_page.doc_id, patched_page.page_index, target, op))
 
     return patched_page, results

@@ -34,9 +34,12 @@ def validate_patch_ops(page: IRPage, ops: list[PatchOp], selected_ids: list[str]
     errors: list[str] = []
     diff_summary: list[PatchDiffEntry] = []
     valid_ids = {primitive.id: primitive for primitive in page.primitives}
-    allowed_ids = set(selected_ids or [])
+    allowed_ids = set(selected_ids) if selected_ids is not None else {op.target_id for op in ops if op.target_id}
 
     for op in ops:
+        if not op.target_id or not op.target_id.strip():
+            errors.append("Missing target id")
+            continue
         if op.target_id not in valid_ids:
             errors.append(f"Unknown target id {op.target_id}")
             continue

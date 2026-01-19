@@ -17,7 +17,7 @@ logger = logging.getLogger("forge_api")
 @router.post("/plan_patch", response_model=PatchPlanResponse)
 def plan_patch_route(payload: PatchPlanRequest, request: Request) -> PatchPlanResponse:
     request_id = get_request_id(request)
-    if not payload.selected_ids and not payload.candidates:
+    if not payload.selected_ids:
         raise AIError(
             status_code=400,
             code="missing_selection",

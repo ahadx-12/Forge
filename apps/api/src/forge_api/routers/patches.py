@@ -40,6 +40,13 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
             message="Patchset is empty",
             details={"doc_id": parsed.doc_id},
         )
+    if patchset.selected_ids is not None and not patchset.selected_ids:
+        raise APIError(
+            status_code=400,
+            code="missing_selection",
+            message="selected_ids cannot be empty",
+            details={"doc_id": parsed.doc_id},
+        )
 
     logger.info(
         "Patch commit request_id=%s doc_id=%s page_index=%s stage=commit",
@@ -58,11 +65,19 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
     validation = validate_patch_ops(base_page, patchset.ops, patchset.selected_ids)
     if not validation.ok:
         missing_targets = [error for error in validation.errors if error.startswith("Unknown target id")]
+        out_of_scope = [error for error in validation.errors if error.endswith("not in selection")]
         if missing_targets:
             raise APIError(
                 status_code=409,
                 code="patch_target_not_found",
                 message="Patch target not found",
+                details={"errors": validation.errors},
+            )
+        if out_of_scope:
+            raise APIError(
+                status_code=400,
+                code="patch_out_of_scope",
+                message="Patch targets outside selection",
                 details={"errors": validation.errors},
             )
         raise APIError(
@@ -73,6 +88,11 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
         )
 
     _, results = apply_ops_to_page(base_page, patchset.ops)
+    warnings = [
+        f"Text did not fit for {result.target_id}"
+        for result in results
+        if getattr(result, "did_not_fit", False)
+    ]
     try:
         record = append_patchset(
             parsed.doc_id,
@@ -82,6 +102,7 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
             patchset.selected_ids,
             validation.diff_summary,
             results,
+            warnings,
         )
         patch_log = load_patch_log(parsed.doc_id)
     except (ClientError, OSError, ValueError) as exc:

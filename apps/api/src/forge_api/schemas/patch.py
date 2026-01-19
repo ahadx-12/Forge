@@ -60,6 +60,7 @@ class PatchOpResult(BaseModel):
     target_id: str
     applied_font_size_pt: float | None = None
     overflow: bool | None = None
+    did_not_fit: bool | None = None
 
 
 class PatchsetRecord(BaseModel):
@@ -71,6 +72,7 @@ class PatchsetRecord(BaseModel):
     selected_ids: list[str] | None = None
     diff_summary: list[PatchDiffEntry] = Field(default_factory=list)
     results: list[PatchOpResult] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PatchsetListResponse(BaseModel):
@@ -94,6 +96,7 @@ class PatchPlanRequest(BaseModel):
     selected_ids: list[str]
     user_instruction: str
     candidates: list[str] | None = None
+    selected_primitives: list[dict[str, object]] | None = None
 
 
 class PatchProposal(BaseModel):

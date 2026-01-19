@@ -74,3 +74,34 @@ def test_ai_flow_plan_and_commit(monkeypatch, client, upload_pdf):
     patches_response = client.get(f"/v1/patches/{doc_id}")
     assert patches_response.status_code == 200
     assert len(patches_response.json()["patchsets"]) == 1
+
+
+def test_ai_plan_patch_invalid_target(monkeypatch, client, upload_pdf):
+    response = upload_pdf("drawing")
+    doc_id = response.json()["document"]["doc_id"]
+
+    base_ir = client.get(f"/v1/ir/{doc_id}?page=0").json()
+    target = next(item for item in base_ir["primitives"] if item["kind"] == "path")
+
+    def fake_response_json(system: str, user: str) -> str:
+        return (
+            '{"ops":[{"op":"set_style","target_id":"not-real","stroke_color":[0,1,0]}],'
+            '"rationale_short":"Make it green"}'
+        )
+
+    class FakeClient:
+        def response_json(self, system: str, user: str) -> str:
+            return fake_response_json(system, user)
+
+    monkeypatch.setattr(ai_patch_planner, "OpenAIClient", lambda: FakeClient())
+
+    payload = {
+        "doc_id": doc_id,
+        "page_index": 0,
+        "selected_ids": [target["id"]],
+        "user_instruction": "Make the line green",
+    }
+    response = client.post("/v1/ai/plan_patch", json=payload)
+    assert response.status_code == 400
+    data = response.json()
+    assert data["error"] == "ai_invalid_output"
