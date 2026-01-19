@@ -40,6 +40,7 @@ interface PdfStageProps {
 export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
   const [scale, setScale] = useState(1);
   const [numPages, setNumPages] = useState<number | null>(initialPageCount ?? null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const fileUrl = useMemo(() => downloadUrl(docId), [docId]);
   const cycleCandidate = useSelectionStore((state) => state.cycleCandidate);
   const loadPatchsets = useSelectionStore((state) => state.loadPatchsets);
@@ -48,6 +49,10 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
   useEffect(() => {
     void loadPatchsets(docId);
   }, [docId, loadPatchsets]);
+
+  useEffect(() => {
+    setPdfError(null);
+  }, [docId, fileUrl]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -71,6 +76,36 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
   }
 
   const { Document, Page } = reactPdf;
+
+  async function handlePdfLoadError(error: unknown) {
+    console.error("PDF failed to load", error);
+    try {
+      const response = await fetch(fileUrl, {
+        headers: {
+          Range: "bytes=0-1"
+        }
+      });
+      if (!response.ok) {
+        const bodyText = await response.text();
+        const snippet = bodyText.trim().slice(0, 180);
+        setPdfError(
+          `PDF download failed (${response.status}).${snippet ? ` ${snippet}` : ""}`
+        );
+        return;
+      }
+      setPdfError(
+        `PDF download failed (${response.status}). ${
+          error instanceof Error && error.message ? error.message : "Unknown error"
+        }`
+      );
+    } catch (fetchError) {
+      setPdfError(
+        `PDF download failed. ${
+          fetchError instanceof Error && fetchError.message ? fetchError.message : "Unknown error"
+        }`
+      );
+    }
+  }
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -105,9 +140,15 @@ export function PdfStage({ docId, initialPageCount }: PdfStageProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto scroll-smooth rounded-2xl border border-forge-border bg-forge-panel/50 p-4">
+        {pdfError ? (
+          <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+            {pdfError}
+          </div>
+        ) : null}
         <Document
           file={fileUrl}
           onLoadSuccess={(pdf) => setNumPages(pdf.numPages)}
+          onLoadError={handlePdfLoadError}
           loading={<div className="text-sm text-slate-400">Loading document…</div>}
         >
           {Array.from({ length: numPages ?? 0 }, (_, index) => (
@@ -135,6 +176,11 @@ interface PdfThumbnailsProps {
 export function PdfThumbnails({ docId, pageCount, activePage, onSelect }: PdfThumbnailsProps) {
   const fileUrl = useMemo(() => downloadUrl(docId), [docId]);
   const reactPdf = useReactPdf();
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPdfError(null);
+  }, [docId, fileUrl]);
 
   if (!reactPdf) {
     return (
@@ -148,7 +194,23 @@ export function PdfThumbnails({ docId, pageCount, activePage, onSelect }: PdfThu
 
   return (
     <div className="h-full overflow-y-auto rounded-2xl border border-forge-border bg-forge-panel/60 p-3">
-      <Document file={fileUrl} loading={<div className="text-xs text-slate-500">Loading…</div>}>
+      {pdfError ? (
+        <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-200">
+          {pdfError}
+        </div>
+      ) : null}
+      <Document
+        file={fileUrl}
+        loading={<div className="text-xs text-slate-500">Loading…</div>}
+        onLoadError={(error) => {
+          console.error("PDF thumbnails failed to load", error);
+          setPdfError(
+            `Thumbnails unavailable. ${
+              error instanceof Error && error.message ? error.message : "Unknown error"
+            }`
+          );
+        }}
+      >
         <div className="flex flex-col gap-4">
           {Array.from({ length: pageCount }, (_, index) => {
             const pageNumber = index + 1;

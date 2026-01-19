@@ -23,6 +23,16 @@ def test_document_upload_and_download(client: TestClient) -> None:
     download_response = client.get(f"/v1/documents/{doc_id}/download")
     assert download_response.status_code == 200
     assert download_response.content.startswith(b"%PDF")
+    assert download_response.headers["content-type"].startswith("application/pdf")
+    assert "inline" in download_response.headers.get("content-disposition", "")
+
+    range_response = client.get(
+        f"/v1/documents/{doc_id}/download", headers={"Range": "bytes=0-9"}
+    )
+    assert range_response.status_code == 206
+    assert range_response.headers["content-type"].startswith("application/pdf")
+    assert range_response.headers["content-range"].startswith("bytes 0-9/")
+    assert len(range_response.content) == 10
 
 
 def test_document_upload_and_decode(client: TestClient) -> None:

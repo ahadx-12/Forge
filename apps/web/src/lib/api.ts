@@ -163,22 +163,27 @@ async function readErrorDetail(response: Response): Promise<string | null> {
   return null;
 }
 
+export function apiUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+}
+
 export function downloadUrl(docId: string): string {
-  return `${API_BASE}/v1/documents/${docId}/download`;
+  return apiUrl(`/v1/documents/${docId}/download`);
 }
 
 export function exportPdfUrl(docId: string, maskMode?: ExportMaskMode): string {
   if (maskMode) {
     const params = new URLSearchParams({ mask_mode: maskMode });
-    return `${API_BASE}/v1/export/${docId}?${params.toString()}`;
+    return apiUrl(`/v1/export/${docId}?${params.toString()}`);
   }
-  return `${API_BASE}/v1/export/${docId}`;
+  return apiUrl(`/v1/export/${docId}`);
 }
 
 export async function uploadDocument(file: File): Promise<DocumentMeta> {
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch(`${API_BASE}/v1/documents/upload`, {
+  const response = await fetch(apiUrl("/v1/documents/upload"), {
     method: "POST",
     body: formData
   });
@@ -191,7 +196,7 @@ export async function uploadDocument(file: File): Promise<DocumentMeta> {
 }
 
 export async function getDocumentMeta(docId: string): Promise<DocumentMeta> {
-  const response = await fetch(`${API_BASE}/v1/documents/${docId}`);
+  const response = await fetch(apiUrl(`/v1/documents/${docId}`));
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail ? `Failed to load document metadata: ${detail}` : "Failed to load document metadata");
@@ -200,7 +205,7 @@ export async function getDocumentMeta(docId: string): Promise<DocumentMeta> {
 }
 
 export async function getDecode(docId: string): Promise<DecodePayload> {
-  const response = await fetch(`${API_BASE}/v1/decode/${docId}`);
+  const response = await fetch(apiUrl(`/v1/decode/${docId}`));
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail ? `Failed to load decode data: ${detail}` : "Failed to load decode data");
@@ -209,7 +214,7 @@ export async function getDecode(docId: string): Promise<DecodePayload> {
 }
 
 export async function getIR(docId: string, pageIndex: number): Promise<IRPage> {
-  const response = await fetch(`${API_BASE}/v1/ir/${docId}?page=${pageIndex}`);
+  const response = await fetch(apiUrl(`/v1/ir/${docId}?page=${pageIndex}`));
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail ? `Failed to load IR data: ${detail}` : "Failed to load IR data");
@@ -218,7 +223,7 @@ export async function getIR(docId: string, pageIndex: number): Promise<IRPage> {
 }
 
 export async function getCompositeIR(docId: string, pageIndex: number): Promise<IRPage> {
-  const response = await fetch(`${API_BASE}/v1/composite/ir/${docId}?page=${pageIndex}`);
+  const response = await fetch(apiUrl(`/v1/composite/ir/${docId}?page=${pageIndex}`));
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail ? `Failed to load composite IR data: ${detail}` : "Failed to load composite IR data");
@@ -231,7 +236,7 @@ export async function hitTest(
   pageIndex: number,
   payload: HitTestRequest
 ): Promise<HitTestResponse> {
-  const response = await fetch(`${API_BASE}/v1/hittest/${docId}?page=${pageIndex}`, {
+  const response = await fetch(apiUrl(`/v1/hittest/${docId}?page=${pageIndex}`), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -252,7 +257,7 @@ export async function planPatch(payload: {
   user_instruction: string;
   candidates?: string[];
 }): Promise<PatchPlanResponse> {
-  const response = await fetch(`${API_BASE}/v1/ai/plan_patch`, {
+  const response = await fetch(apiUrl("/v1/ai/plan_patch"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -267,7 +272,7 @@ export async function planPatch(payload: {
 }
 
 export async function commitPatch(docId: string, patchset: PatchsetInput): Promise<PatchCommitResponse> {
-  const response = await fetch(`${API_BASE}/v1/patch/commit`, {
+  const response = await fetch(apiUrl("/v1/patch/commit"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -285,7 +290,7 @@ export async function commitPatch(docId: string, patchset: PatchsetInput): Promi
 }
 
 export async function getPatches(docId: string): Promise<PatchsetListResponse> {
-  const response = await fetch(`${API_BASE}/v1/patches/${docId}`);
+  const response = await fetch(apiUrl(`/v1/patches/${docId}`));
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     throw new Error(detail ? `Failed to load patch history: ${detail}` : "Failed to load patch history");
@@ -294,7 +299,7 @@ export async function getPatches(docId: string): Promise<PatchsetListResponse> {
 }
 
 export async function revertLastPatch(docId: string): Promise<PatchsetListResponse> {
-  const response = await fetch(`${API_BASE}/v1/patch/revert_last?doc_id=${docId}`, {
+  const response = await fetch(apiUrl(`/v1/patch/revert_last?doc_id=${docId}`), {
     method: "POST"
   });
   if (!response.ok) {
