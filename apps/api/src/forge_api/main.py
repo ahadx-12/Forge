@@ -4,9 +4,12 @@ import logging
 import traceback
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from forge_api.core.errors import APIError
+from forge_api.core.request_context import get_request_id
 from forge_api.routers.ai import router as ai_router
 from forge_api.routers.decode import router as decode_router
 from forge_api.routers.documents import router as documents_router
@@ -63,10 +66,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     """
     Ensures ALL 500s print a full traceback to Railway Logs.
     """
+    request_id = get_request_id(request)
     logger.error(
-        "Unhandled exception on %s %s\n%s",
+        "Unhandled exception on %s %s request_id=%s\n%s",
         request.method,
         request.url.path,
+        request_id,
         traceback.format_exc(),
     )
     return JSONResponse(
@@ -74,6 +79,48 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         content={
             "error": "internal_error",
             "path": request.url.path,
+            "request_id": request_id,
+        },
+    )
+
+
+@app.exception_handler(APIError)
+async def api_error_handler(request: Request, exc: APIError):
+    request_id = get_request_id(request)
+    logger.warning(
+        "Handled API error on %s %s request_id=%s code=%s",
+        request.method,
+        request.url.path,
+        request_id,
+        exc.code,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.code,
+            "message": exc.message,
+            "details": exc.details,
+            "request_id": request_id,
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    request_id = get_request_id(request)
+    logger.info(
+        "Validation error on %s %s request_id=%s",
+        request.method,
+        request.url.path,
+        request_id,
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "validation_error",
+            "message": "Invalid request payload",
+            "details": exc.errors(),
+            "request_id": request_id,
         },
     )
 

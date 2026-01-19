@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
+from forge_api.core.errors import AIError, UpstreamAIError
 from forge_api.schemas.patch import PatchOp, PatchPlanRequest, PatchProposal
 from forge_api.services.openai_client import OpenAIClient
 
@@ -58,6 +59,13 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
     allowed_ids = set(request.selected_ids)
     if request.candidates:
         allowed_ids.update(request.candidates)
+    if not allowed_ids:
+        raise AIError(
+            status_code=400,
+            code="missing_selection",
+            message="Selection or candidates are required for AI patch planning",
+            details={"doc_id": request.doc_id, "page_index": request.page_index},
+        )
 
     selection_context = [
         {
@@ -89,10 +97,18 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
     try:
         payload = json.loads(_extract_json(response_text))
         return _validate_ops(payload, allowed_ids, request.page_index)
-    except Exception:
+    except Exception as exc:
         retry_text = client.response_json(
             system=SYSTEM_PROMPT + "\n" + STRICT_RETRY_PROMPT,
             user=json.dumps(prompt, ensure_ascii=False),
         )
-        payload = json.loads(_extract_json(retry_text))
-        return _validate_ops(payload, allowed_ids, request.page_index)
+        try:
+            payload = json.loads(_extract_json(retry_text))
+            return _validate_ops(payload, allowed_ids, request.page_index)
+        except Exception as retry_exc:
+            raise UpstreamAIError(
+                status_code=502,
+                code="ai_invalid_response",
+                message="AI returned an invalid patch plan",
+                details={"error": str(exc), "retry_error": str(retry_exc)},
+            ) from retry_exc
