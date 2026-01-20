@@ -11,6 +11,8 @@ from forge_api.core.patch.fonts import DEFAULT_FONT, normalize_font_name
 from forge_api.schemas.ir import IRPage
 from forge_api.schemas.patch import PatchOp
 from forge_api.services.ir_pdf import get_page_ir
+from forge_api.services.forge_manifest import build_forge_manifest
+from forge_api.services.forge_overlay import build_overlay_state, load_overlay_patch_log
 from forge_api.services.patch_store import load_patch_log
 from forge_api.settings import get_settings
 from forge_api.services.storage import get_storage
@@ -65,6 +67,27 @@ def _parse_solid_color(value: str) -> tuple[float, float, float]:
         return tuple(channel / 255 for channel in channels)  # type: ignore[return-value]
     except ValueError:
         return (1.0, 1.0, 1.0)
+
+
+def _hex_to_rgb(value: str | None) -> tuple[float, float, float]:
+    if not value or not value.startswith("#") or len(value) != 7:
+        return (0.0, 0.0, 0.0)
+    try:
+        r = int(value[1:3], 16) / 255
+        g = int(value[3:5], 16) / 255
+        b = int(value[5:7], 16) / 255
+        return (r, g, b)
+    except ValueError:
+        return (0.0, 0.0, 0.0)
+
+
+def _overlay_font(font_name: str | None) -> str:
+    if not font_name:
+        return DEFAULT_FONT
+    lower = font_name.lower()
+    if "bold" in lower or "black" in lower:
+        return "helvB"
+    return "helv"
 
 
 def _sample_background_color(page: fitz.Page, rect: fitz.Rect) -> tuple[float, float, float] | None:
@@ -162,38 +185,88 @@ def export_pdf_with_overlays(
     warning: str | None = None
     try:
         patchsets = load_patch_log(doc_id)
+        manifest = None
+        overlay_state = None
+        try:
+            manifest = build_forge_manifest(doc_id)
+            overlay_state = build_overlay_state(manifest, load_overlay_patch_log(doc_id))
+        except FileNotFoundError:
+            manifest = None
+            overlay_state = None
         for page_index in range(len(doc)):
             page = doc[page_index]
             ops: list[PatchOp] = []
             for patchset in patchsets:
                 if patchset.page_index == page_index:
                     ops.extend(patchset.ops)
-            if not ops:
-                continue
-            composite_page = _composite_page(doc_id, page_index, ops)
-            base_page = get_page_ir(doc_id, page_index)
-            base_by_id = {primitive.id: primitive for primitive in base_page.primitives}
-            for primitive in composite_page.primitives:
-                base = base_by_id.get(primitive.id)
-                if base is None:
-                    continue
-                if primitive.kind == "path" and primitive.style == base.style:
-                    continue
-                if primitive.kind == "text" and primitive.text == base.text and primitive.style == base.style:
-                    continue
-                fill_color = solid_color
-                if requested_mode == "AUTO_BG":
-                    sampled = _sample_background_color(page, fitz.Rect(primitive.bbox))
-                    if sampled is None:
-                        warning = "AUTO_BG_FAILED"
+            if ops:
+                composite_page = _composite_page(doc_id, page_index, ops)
+                base_page = get_page_ir(doc_id, page_index)
+                base_by_id = {primitive.id: primitive for primitive in base_page.primitives}
+                for primitive in composite_page.primitives:
+                    base = base_by_id.get(primitive.id)
+                    if base is None:
+                        continue
+                    if primitive.kind == "path" and primitive.style == base.style:
+                        continue
+                    if primitive.kind == "text" and primitive.text == base.text and primitive.style == base.style:
+                        continue
+                    fill_color = solid_color
+                    if requested_mode == "AUTO_BG":
+                        sampled = _sample_background_color(page, fitz.Rect(primitive.bbox))
+                        if sampled is None:
+                            warning = "AUTO_BG_FAILED"
+                            fill_color = solid_color
+                        else:
+                            fill_color = sampled
+                    _overlay_rect(page, primitive.bbox, padding_pt, fill_color)
+                    if primitive.kind == "path":
+                        _draw_path(page, primitive, primitive.bbox)
+                    elif primitive.kind == "text":
+                        _draw_text(page, primitive, primitive.bbox, doc_id, page_index)
+
+            if manifest and overlay_state:
+                manifest_pages = {page_item.get("index"): page_item for page_item in manifest.get("pages", [])}
+                manifest_page = manifest_pages.get(page_index)
+                if manifest_page:
+                    manifest_items = {item.get("forge_id"): item for item in manifest_page.get("items", [])}
+                    for forge_id, overlay in overlay_state.get(page_index, {}).items():
+                        base_item = manifest_items.get(forge_id)
+                        if not base_item:
+                            continue
+                        if overlay.get("text") == base_item.get("text"):
+                            continue
+                        bbox = base_item.get("bbox") or [0.0, 0.0, 0.0, 0.0]
                         fill_color = solid_color
-                    else:
-                        fill_color = sampled
-                _overlay_rect(page, primitive.bbox, padding_pt, fill_color)
-                if primitive.kind == "path":
-                    _draw_path(page, primitive, primitive.bbox)
-                elif primitive.kind == "text":
-                    _draw_text(page, primitive, primitive.bbox, doc_id, page_index)
+                        if requested_mode == "AUTO_BG":
+                            sampled = _sample_background_color(page, fitz.Rect(bbox))
+                            if sampled is None:
+                                warning = "AUTO_BG_FAILED"
+                                fill_color = solid_color
+                            else:
+                                fill_color = sampled
+                        _overlay_rect(page, bbox, padding_pt, fill_color)
+                        font_name = _overlay_font(base_item.get("font"))
+                        font_size = float(base_item.get("size") or 12)
+                        color = _hex_to_rgb(base_item.get("color"))
+                        x0, y0, x1, y1 = bbox
+                        text_value = overlay.get("text") or ""
+                        try:
+                            page.insert_text(
+                                (x0, max(y0 + 1, y1 - 1)),
+                                text_value,
+                                fontname=font_name,
+                                fontsize=font_size,
+                                color=color,
+                            )
+                        except (RuntimeError, ValueError):
+                            page.insert_text(
+                                (x0, max(y0 + 1, y1 - 1)),
+                                text_value,
+                                fontname=DEFAULT_FONT,
+                                fontsize=font_size,
+                                color=color,
+                            )
 
         buffer = BytesIO()
         doc.save(buffer)

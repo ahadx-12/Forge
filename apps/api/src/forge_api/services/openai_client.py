@@ -30,7 +30,7 @@ class OpenAIClient:
                 message="AI not configured",
                 details={"hint": "Set OPENAI_API_KEY on the API service."},
             )
-        self.model = settings.OPENAI_MODEL or "gpt-5.2"
+        self.model = settings.FORGE_OPENAI_MODEL or settings.OPENAI_MODEL or "gpt-5.2"
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.timeout_s = 20.0
 

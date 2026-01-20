@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
+from pydantic import ConfigDict
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -140,3 +142,64 @@ class PatchProposal(BaseModel):
 
 class PatchPlanResponse(BaseModel):
     proposed_patchset: PatchProposal
+
+
+class OverlaySelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    forge_id: str
+    text: str
+    content_hash: str
+    bbox: list[float]
+
+
+class OverlayPatchOp(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["replace_overlay_text"]
+    page_index: int
+    forge_id: str
+    old_hash: str
+    new_text: str
+
+
+class OverlayPatchPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int
+    ops: list[OverlayPatchOp]
+
+
+class OverlayPatchPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    doc_id: str
+    page_index: int
+    selection: list[OverlaySelection]
+    user_prompt: str
+
+
+class OverlayPatchCommitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    doc_id: str
+    page_index: int
+    selection: list[OverlaySelection]
+    ops: list[OverlayPatchOp]
+
+
+class OverlayPatchRecord(BaseModel):
+    patch_id: str
+    created_at_iso: datetime
+    ops: list[OverlayPatchOp]
+
+
+class OverlayEntry(BaseModel):
+    forge_id: str
+    text: str
+    content_hash: str
+
+
+class OverlayPatchCommitResponse(BaseModel):
+    patchset: OverlayPatchRecord
+    overlay: list[OverlayEntry]

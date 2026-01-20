@@ -95,6 +95,7 @@ If Railway builds from the repo root, the root `package.json` includes `build` a
 | --- | --- | --- |
 | `OPENAI_API_KEY` | `***` | Only for AI patch planning (server-side only). |
 | `OPENAI_MODEL` | `gpt-5.2` | Optional override. |
+| `FORGE_OPENAI_MODEL` | `gpt-5.2` | Preferred model override for Forge AI planners. |
 | `FORGE_PATCH_STORE_DRIVER` | `s3` | Defaults to storage driver. |
 | `FORGE_EXPORT_MASK_SOLID_COLOR` | `255,255,255` | RGB for solid mask fill. |
 | `FORGE_BUILD_VERSION` | `2024.10.01` | Shown in `/health`. |
@@ -106,7 +107,7 @@ If Railway builds from the repo root, the root `package.json` includes `build` a
 AI patch planning runs **only** in `apps/api`. In production you must set:
 
 - `OPENAI_API_KEY` (required)
-- `OPENAI_MODEL` (optional override, defaults to `gpt-5.2`)
+- `FORGE_OPENAI_MODEL` or `OPENAI_MODEL` (optional override, defaults to `gpt-5.2`)
 
 If AI is misconfigured or upstream errors occur, the API responds with structured JSON:
 
