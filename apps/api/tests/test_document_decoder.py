@@ -32,3 +32,34 @@ def test_pdf_decoded_to_blocks_not_characters():
 
     paragraph = elements[1]
     assert "paragraph with multiple words" in paragraph["text"]
+
+
+def test_pdf_decoder_normalizes_bbox_to_top_left():
+    pdf_bytes = _make_test_pdf()
+
+    decoder = DocumentDecoder()
+    decoded = decoder.decode_pdf(pdf_bytes)
+
+    page = decoded["pages"][0]
+    elements = page["elements"]
+    first = elements[0]
+    x0, y0, x1, y1 = first["bbox"]
+
+    assert 0.0 <= x0 < x1 <= 1.0
+    assert 0.0 <= y0 < y1 <= 1.0
+    assert y0 < 0.3
+
+
+def test_pdf_decoder_includes_line_and_span_metadata():
+    pdf_bytes = _make_test_pdf()
+
+    decoder = DocumentDecoder()
+    decoded = decoder.decode_pdf(pdf_bytes)
+
+    page = decoded["pages"][0]
+    element = page["elements"][0]
+    lines = element.get("lines")
+
+    assert isinstance(lines, list)
+    assert lines
+    assert "spans" in lines[0]

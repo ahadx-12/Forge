@@ -186,9 +186,27 @@ export type ForgeManifestElement = {
   style: {
     font_size_pt: number;
     is_bold: boolean;
+    is_italic?: boolean;
     color: string;
     font_family: string;
+    line_height?: number | null;
+    wrap_policy?: "auto" | "nowrap" | "prewrap";
   };
+  lines?: {
+    text: string;
+    bbox: number[];
+    spans: {
+      text: string;
+      bbox: number[];
+      style: {
+        font_size_pt: number;
+        font_family: string;
+        is_bold: boolean;
+        is_italic?: boolean;
+        color: string;
+      };
+    }[];
+  }[];
   page_index: number;
 };
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.util import find_spec
 from io import BytesIO
 import logging
 
@@ -11,6 +12,7 @@ from forge_api.core.patch.fonts import DEFAULT_FONT, normalize_font_name
 from forge_api.schemas.ir import IRPage
 from forge_api.schemas.patch import PatchOp
 from forge_api.services.ir_pdf import get_page_ir
+from forge_api.services.export_html_pdf import export_pdf_from_html
 from forge_api.services.forge_manifest import build_forge_manifest
 from forge_api.services.forge_overlay import build_overlay_state, load_overlay_patch_log
 from forge_api.services.patch_store import load_patch_log
@@ -27,6 +29,10 @@ class ExportResult:
     payload: bytes
     mask_mode: str
     warning: str | None = None
+
+
+def _playwright_available() -> bool:
+    return find_spec("playwright") is not None
 
 
 def _to_rgb(color) -> tuple[float, float, float]:
@@ -222,16 +228,27 @@ def export_pdf_with_overlays(
     padding_pt: float = DEFAULT_PADDING_PT,
     mask_mode: str | None = None,
 ) -> ExportResult:
+    settings = get_settings()
+    if settings.FORGE_RENDER_MODE.lower() == "html" and _playwright_available():
+        html_result = export_pdf_from_html(doc_id)
+        requested_mode = (mask_mode or settings.FORGE_EXPORT_MASK_MODE).upper()
+        return ExportResult(
+            payload=html_result.payload,
+            mask_mode=requested_mode,
+            warning="mask_mode ignored for html renderer",
+        )
+
     storage = get_storage()
     pdf_key = f"documents/{doc_id}/original.pdf"
     pdf_bytes = storage.get_bytes(pdf_key)
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    settings = get_settings()
     requested_mode = (mask_mode or settings.FORGE_EXPORT_MASK_MODE).upper()
     if requested_mode not in {"SOLID", "AUTO_BG"}:
         requested_mode = "SOLID"
     solid_color = _parse_solid_color(settings.FORGE_EXPORT_MASK_SOLID_COLOR)
     warning: str | None = None
+    if settings.FORGE_RENDER_MODE.lower() == "html" and not _playwright_available():
+        warning = "PLAYWRIGHT_UNAVAILABLE"
     try:
         patchsets = load_patch_log(doc_id)
         manifest = None
