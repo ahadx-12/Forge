@@ -26,7 +26,16 @@ def test_ai_plan_patch_schema(monkeypatch, client, upload_pdf):
         "doc_id": doc_id,
         "page_index": 0,
         "selected_ids": [target["id"]],
-        "user_instruction": "Make the line green"
+        "user_instruction": "Make the line green",
+        "selection": {
+            "element_id": target["id"],
+            "page_index": 0,
+            "bbox": target["bbox"],
+            "text": target.get("text"),
+            "font_name": target.get("style", {}).get("font"),
+            "font_size": target.get("style", {}).get("size"),
+            "parent_id": None,
+        },
     }
     response = client.post("/v1/ai/plan_patch", json=payload)
     assert response.status_code == 200

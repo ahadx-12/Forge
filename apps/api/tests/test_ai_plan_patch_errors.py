@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+from forge_api.core.patch.selection import compute_content_hash
 from forge_api.services import ai_patch_planner
 from forge_api.settings import get_settings
+
+
+def _selection_from_item(item: dict) -> dict:
+    return {
+        "element_id": item["id"],
+        "page_index": 0,
+        "bbox": item["bbox"],
+        "text": item.get("text"),
+        "font_name": item.get("style", {}).get("font"),
+        "font_size": item.get("style", {}).get("size"),
+        "parent_id": None,
+    }
 
 
 def test_plan_patch_missing_openai_key(monkeypatch, client, upload_pdf):
@@ -18,6 +31,7 @@ def test_plan_patch_missing_openai_key(monkeypatch, client, upload_pdf):
         "page_index": 0,
         "selected_ids": [target["id"]],
         "user_instruction": "Make it green",
+        "selection": _selection_from_item(target),
     }
     response = client.post("/v1/ai/plan_patch", json=payload)
     assert response.status_code == 503
@@ -37,9 +51,9 @@ def test_ai_flow_plan_and_commit(monkeypatch, client, upload_pdf):
 
     def fake_response_json(system: str, user: str) -> str:
         return (
-            '{"ops":[{"op":"replace_text","target_id":"%s","new_text":"AHAD","policy":"FIT_IN_BOX"}],'
+            '{"ops":[{"op":"replace_text","target_id":"%s","new_text":"AHAD","policy":"FIT_IN_BOX","old_text":"%s"}],'
             '"rationale_short":"Update name"}'
-        ) % text_item["id"]
+        ) % (text_item["id"], text_item["text"])
 
     class FakeClient:
         def response_json(self, system: str, user: str) -> str:
@@ -52,6 +66,7 @@ def test_ai_flow_plan_and_commit(monkeypatch, client, upload_pdf):
         "page_index": 0,
         "selected_ids": [text_item["id"]],
         "user_instruction": "Change the name to AHAD",
+        "selection": _selection_from_item(text_item),
     }
     plan_response = client.post("/v1/ai/plan_patch", json=plan_payload)
     assert plan_response.status_code == 200
@@ -61,6 +76,15 @@ def test_ai_flow_plan_and_commit(monkeypatch, client, upload_pdf):
         "/v1/patch/commit",
         json={
             "doc_id": doc_id,
+            "allowed_targets": [
+                {
+                    "element_id": text_item["id"],
+                    "page_index": 0,
+                    "content_hash": compute_content_hash(text_item["text"]),
+                    "bbox": text_item["bbox"],
+                    "parent_id": None,
+                }
+            ],
             "patchset": {
                 "ops": proposed["ops"],
                 "page_index": proposed["page_index"],
@@ -100,8 +124,9 @@ def test_ai_plan_patch_invalid_target(monkeypatch, client, upload_pdf):
         "page_index": 0,
         "selected_ids": [target["id"]],
         "user_instruction": "Make the line green",
+        "selection": _selection_from_item(target),
     }
     response = client.post("/v1/ai/plan_patch", json=payload)
     assert response.status_code == 400
     data = response.json()
-    assert data["error"] == "ai_invalid_output"
+    assert data["error"] == "AI_OUT_OF_SCOPE"

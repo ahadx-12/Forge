@@ -40,6 +40,7 @@ export type IRPrimitive = {
   signature_fields: Record<string, unknown>;
   text?: string | null;
   patch_meta?: Record<string, unknown> | null;
+  font_ref?: Record<string, unknown> | null;
 };
 
 export type IRPage = {
@@ -95,7 +96,27 @@ export type PatchOp =
       target_id: string;
       new_text: string;
       policy: "FIT_IN_BOX" | "OVERFLOW_NOTICE";
+      old_text?: string | null;
     };
+
+export type SelectionFingerprint = {
+  element_id: string;
+  page_index: number;
+  content_hash: string;
+  bbox: number[];
+  parent_id?: string | null;
+};
+
+export type SelectionSnapshot = {
+  element_id: string;
+  page_index: number;
+  bbox: number[];
+  text?: string | null;
+  font_name?: string | null;
+  font_size?: number | null;
+  parent_id?: string | null;
+  content_hash?: string | null;
+};
 
 export type PatchsetInput = {
   ops: PatchOp[];
@@ -118,9 +139,15 @@ export type PatchsetRecord = {
   }[];
   results: {
     target_id: string;
+    ok?: boolean;
+    code?: string | null;
+    details?: Record<string, unknown> | null;
     applied_font_size_pt?: number | null;
     overflow?: boolean | null;
     did_not_fit?: boolean | null;
+    font_adjusted?: boolean | null;
+    bbox_adjusted?: boolean | null;
+    warnings?: Record<string, unknown>[];
   }[];
   warnings?: string[];
 };
@@ -133,6 +160,8 @@ export type PatchsetListResponse = {
 export type PatchCommitResponse = {
   patchset: PatchsetRecord;
   patch_log: PatchsetRecord[];
+  applied_ops?: PatchsetRecord["results"];
+  rejected_ops?: PatchsetRecord["results"];
 };
 
 export type PatchPlanResponse = {
@@ -283,7 +312,7 @@ export async function hitTest(
 export async function planPatch(payload: {
   doc_id: string;
   page_index: number;
-  selected_ids: string[];
+  selected_ids?: string[];
   user_instruction: string;
   candidates?: string[];
   selected_primitives?: {
@@ -293,6 +322,7 @@ export async function planPatch(payload: {
     text?: string | null;
     style?: Record<string, unknown>;
   }[];
+  selection: SelectionSnapshot;
 }): Promise<PatchPlanResponse> {
   const response = await fetch(apiUrl("/v1/ai/plan_patch"), {
     method: "POST",
@@ -313,7 +343,11 @@ export async function planPatch(payload: {
   return (await response.json()) as PatchPlanResponse;
 }
 
-export async function commitPatch(docId: string, patchset: PatchsetInput): Promise<PatchCommitResponse> {
+export async function commitPatch(
+  docId: string,
+  patchset: PatchsetInput,
+  allowedTargets?: SelectionFingerprint[]
+): Promise<PatchCommitResponse> {
   const response = await fetch(apiUrl("/v1/patch/commit"), {
     method: "POST",
     headers: {
@@ -321,7 +355,8 @@ export async function commitPatch(docId: string, patchset: PatchsetInput): Promi
     },
     body: JSON.stringify({
       doc_id: docId,
-      patchset
+      patchset,
+      allowed_targets: allowedTargets
     })
   });
   if (!response.ok) {

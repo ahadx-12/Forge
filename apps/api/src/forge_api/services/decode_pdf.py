@@ -107,6 +107,10 @@ def decode_document(doc_id: str) -> dict[str, Any]:
                                 "font": span.get("font"),
                                 "size": _round(span.get("size", 0.0), doc_id, "span.size"),
                                 "color": span.get("color"),
+                                "font_ref": {
+                                    "pdf_font_name": span.get("font"),
+                                    "embedded": False,
+                                },
                             }
                         )
 
