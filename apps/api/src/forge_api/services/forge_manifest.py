@@ -81,6 +81,7 @@ def _bbox_pt_to_px(
 
 
 def _merge_line_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge adjacent character-level spans into word-level spans with strict validation."""
     if not spans:
         return []
     spans = sorted(spans, key=lambda item: item["bbox"][0])
@@ -91,29 +92,35 @@ def _merge_line_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         current = merged[-1]
         if (
-            span["font"] == current["font"]
-            and span["size"] == current["size"]
-            and span["color"] == current["color"]
+            span["font"] != current["font"]
+            or span["size"] != current["size"]
+            or span["color"] != current["color"]
         ):
-            current_bbox = current["bbox"]
-            span_bbox = span["bbox"]
-            overlap = min(current_bbox[3], span_bbox[3]) - max(current_bbox[1], span_bbox[1])
-            gap = span_bbox[0] - current_bbox[2]
-            gap_threshold = max(current["size"] * 0.25, 1.0)
-            if overlap > 0 and gap <= gap_threshold:
-                needs_space = gap > current["size"] * 0.15
-                if needs_space and not current["text"].endswith(" ") and not span["text"].startswith(" "):
-                    current["text"] = f"{current['text']} {span['text']}"
-                else:
-                    current["text"] = f"{current['text']}{span['text']}"
-                current["bbox"] = [
-                    min(current_bbox[0], span_bbox[0]),
-                    min(current_bbox[1], span_bbox[1]),
-                    max(current_bbox[2], span_bbox[2]),
-                    max(current_bbox[3], span_bbox[3]),
-                ]
-                continue
-        merged.append(span)
+            merged.append(span)
+            continue
+        current_bbox = current["bbox"]
+        span_bbox = span["bbox"]
+        overlap = min(current_bbox[3], span_bbox[3]) - max(current_bbox[1], span_bbox[1])
+        box_height = current_bbox[3] - current_bbox[1]
+        if box_height <= 0 or overlap < box_height * 0.7:
+            merged.append(span)
+            continue
+        gap = span_bbox[0] - current_bbox[2]
+        max_gap = current["size"] * 0.5
+        space_gap = current["size"] * 0.2
+        should_merge = gap < 0 or gap <= space_gap
+        if gap > max_gap:
+            should_merge = False
+        if should_merge:
+            current["text"] = f"{current['text']}{span['text']}"
+            current["bbox"] = [
+                min(current_bbox[0], span_bbox[0]),
+                min(current_bbox[1], span_bbox[1]),
+                max(current_bbox[2], span_bbox[2]),
+                max(current_bbox[3], span_bbox[3]),
+            ]
+        else:
+            merged.append(span)
     return merged
 
 
@@ -159,12 +166,14 @@ def build_forge_manifest(doc_id: str) -> dict[str, Any]:
     try:
         for page_index in range(len(doc)):
             page = doc[page_index]
-            pix = page.get_pixmap(alpha=False)
+            zoom = 2.0
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
             scale_x = pix.width / page.rect.width if page.rect.width else 1.0
             scale_y = pix.height / page.rect.height if page.rect.height else 1.0
+            png_bytes = pix.tobytes("png")
             storage.put_bytes(
                 _page_png_key(doc_id, page_index),
-                pix.tobytes("png"),
+                png_bytes,
                 content_type="image/png",
             )
 
@@ -229,11 +238,20 @@ def build_forge_manifest(doc_id: str) -> dict[str, Any]:
                 )
 
             if items and not debug_logged:
-                first_item = items[0]
+                preview_items = [
+                    {
+                        "forge_id": item["forge_id"],
+                        "bbox_pdf": item["bbox_pt"],
+                        "bbox_px": item["bbox"],
+                        "text": item["text"],
+                    }
+                    for item in items[:3]
+                ]
+                png_kb = round(len(png_bytes) / 1024, 1)
                 logger.info(
                     "forge manifest overlay debug doc_id=%s pdf_box={w_pt:%s,h_pt:%s,rotation:%s,box_type:%s} "
-                    "png={w_px:%s,h_px:%s} primitive_before={forge_id:%s,bbox_pdf:%s,text:%s} "
-                    "primitive_after={forge_id:%s,bbox_px:%s,text:%s} expected_scale={scale_x:%s,scale_y:%s}",
+                    "png={w_px:%s,h_px:%s,size_kb:%s} primitives=%s expected_scale={scale_x:%s,scale_y:%s} "
+                    "preview=%s",
                     doc_id,
                     _round(page.rect.width),
                     _round(page.rect.height),
@@ -241,14 +259,11 @@ def build_forge_manifest(doc_id: str) -> dict[str, Any]:
                     "cropbox",
                     pix.width,
                     pix.height,
-                    first_item["forge_id"],
-                    first_item["bbox_pt"],
-                    first_item["text"],
-                    first_item["forge_id"],
-                    first_item["bbox"],
-                    first_item["text"],
+                    png_kb,
+                    len(items),
                     _round(scale_x),
                     _round(scale_y),
+                    preview_items,
                 )
                 debug_logged = True
 
