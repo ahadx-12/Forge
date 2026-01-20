@@ -53,6 +53,11 @@ export function OverlayLayerStack({
           const displayText = overlayEntry?.text ?? item.text;
           const isSelected = selectedForgeId === item.forge_id;
           const [x0, y0, x1, y1] = item.bbox;
+          const width = x1 - x0;
+          const height = y1 - y0;
+          const fontSize = item.size || DEFAULT_FONT_SIZE;
+          const estimatedTextWidth = displayText.length * fontSize * 0.6;
+          const isLikelyOverflowing = estimatedTextWidth > width;
           return (
             <div
               key={item.forge_id}
@@ -70,16 +75,24 @@ export function OverlayLayerStack({
               style={{
                 left: x0,
                 top: y0,
-                width: x1 - x0,
-                height: y1 - y0,
+                width,
+                height,
                 color: item.color,
-                fontSize: item.size || DEFAULT_FONT_SIZE,
+                fontSize,
                 fontFamily: "Helvetica, Arial, sans-serif",
-                lineHeight: 1,
-                whiteSpace: "pre",
-                overflow: "hidden",
+                lineHeight: 1.2,
+                whiteSpace: "nowrap",
+                overflow: "visible",
+                textOverflow: "clip",
                 transformOrigin: "top left",
-                pointerEvents: "auto"
+                pointerEvents: "auto",
+                ...(showDebugOverlay
+                  ? {
+                      outline: `1px solid ${
+                        isLikelyOverflowing ? "rgba(255,0,0,0.6)" : "rgba(255,0,0,0.3)"
+                      }`
+                    }
+                  : {})
               }}
             >
               {displayText}
@@ -91,6 +104,8 @@ export function OverlayLayerStack({
         <div className="absolute inset-0 pointer-events-none" data-layer="debug">
           {items.slice(0, debugLimit).map((item) => {
             const [x0, y0, x1, y1] = item.bbox;
+            const width = x1 - x0;
+            const height = y1 - y0;
             return (
               <div
                 key={`debug_${item.forge_id}`}
@@ -98,12 +113,12 @@ export function OverlayLayerStack({
                 style={{
                   left: x0,
                   top: y0,
-                  width: x1 - x0,
-                  height: y1 - y0
+                  width,
+                  height
                 }}
               >
                 <span className="absolute -top-4 left-0 rounded bg-amber-500/20 px-1">
-                  {item.forge_id}
+                  {item.forge_id} w:{Math.round(width)} h:{Math.round(height)} len:{item.text.length}
                 </span>
               </div>
             );
