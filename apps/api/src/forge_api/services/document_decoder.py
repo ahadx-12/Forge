@@ -19,6 +19,7 @@ class DocumentElement:
     text: str
     bbox: tuple[float, float, float, float]
     style: dict[str, Any]
+    lines: list[dict[str, Any]]
     page_index: int
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,6 +29,7 @@ class DocumentElement:
             "text": self.text,
             "bbox": self.bbox,
             "style": self.style,
+            "lines": self.lines,
             "page_index": self.page_index,
         }
 
@@ -55,6 +57,7 @@ def _normalize_bbox(
     page_width_pt: float,
     page_height_pt: float,
     rotation: int,
+    flip_y: bool,
 ) -> tuple[float, float, float, float]:
     x0_pt, y0_pt, x1_pt, y1_pt = bbox_pt
     corners = [
@@ -70,15 +73,52 @@ def _normalize_bbox(
     y0_rot, y1_rot = min(ys), max(ys)
     rotated_width_pt, rotated_height_pt = _rotated_dimensions(page_width_pt, page_height_pt, rotation)
 
-    y0_top = rotated_height_pt - y1_rot
-    y1_top = rotated_height_pt - y0_rot
+    if flip_y:
+        y0_top = rotated_height_pt - y1_rot
+        y1_top = rotated_height_pt - y0_rot
+    else:
+        y0_top = y0_rot
+        y1_top = y1_rot
 
     x0_norm = x0_rot / rotated_width_pt if rotated_width_pt else 0.0
     x1_norm = x1_rot / rotated_width_pt if rotated_width_pt else 0.0
     y0_norm = y0_top / rotated_height_pt if rotated_height_pt else 0.0
     y1_norm = y1_top / rotated_height_pt if rotated_height_pt else 0.0
 
-    return (x0_norm, y0_norm, x1_norm, y1_norm)
+    x_min, x_max = sorted((x0_norm, x1_norm))
+    y_min, y_max = sorted((y0_norm, y1_norm))
+
+    return (
+        max(0.0, min(1.0, x_min)),
+        max(0.0, min(1.0, y_min)),
+        max(0.0, min(1.0, x_max)),
+        max(0.0, min(1.0, y_max)),
+    )
+
+
+def _detect_y_origin(blocks: list[dict[str, Any]], page_height_pt: float) -> str:
+    if page_height_pt <= 0:
+        return "top-left"
+    centers: list[float] = []
+    min_y0 = page_height_pt
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        bbox = block.get("bbox") or []
+        if len(bbox) < 4:
+            continue
+        y0 = float(bbox[1])
+        y1 = float(bbox[3])
+        centers.append((y0 + y1) / 2)
+        min_y0 = min(min_y0, y0)
+        if len(centers) >= 12:
+            break
+    if not centers:
+        return "top-left"
+    avg_center = sum(centers) / len(centers)
+    if avg_center > page_height_pt * 0.6 and min_y0 > page_height_pt * 0.4:
+        return "bottom-left"
+    return "top-left"
 
 
 class DocumentDecoder:
@@ -115,6 +155,8 @@ class DocumentDecoder:
                 )
 
                 blocks = page.get_text("dict")["blocks"]
+                y_origin = _detect_y_origin(blocks, page_height_pt)
+                flip_y = y_origin == "bottom-left"
                 elements = []
 
                 for block_idx, block in enumerate(blocks):
@@ -123,34 +165,89 @@ class DocumentDecoder:
 
                     block_text = ""
                     block_bbox = block["bbox"]
+                    lines_payload = []
 
                     font_size_pt = 12.0
                     is_bold = False
+                    is_italic = False
                     color = "#000000"
                     font_family = "Helvetica"
+                    line_heights: list[float] = []
 
                     for line in block.get("lines", []):
+                        line_text_parts = []
+                        line_spans = []
+                        line_bbox = line.get("bbox") or block_bbox
+                        if len(line_bbox) >= 4:
+                            line_heights.append(float(line_bbox[3] - line_bbox[1]))
                         for span in line.get("spans", []):
+                            span_text = span.get("text", "")
                             if not block_text:
                                 font_size_pt = float(span.get("size", 12.0))
                                 font = span.get("font", "")
                                 font_lower = font.lower()
                                 is_bold = "bold" in font_lower
+                                is_italic = "italic" in font_lower
                                 font_family = font or font_family
                                 color_int = span.get("color", 0)
                                 r = (color_int >> 16) & 0xFF
                                 g = (color_int >> 8) & 0xFF
                                 b = color_int & 0xFF
                                 color = f"#{r:02x}{g:02x}{b:02x}"
+                            line_text_parts.append(span_text)
+                            span_bbox = span.get("bbox") or line_bbox
+                            span_bbox_norm = _normalize_bbox(
+                                span_bbox,
+                                page_width_pt,
+                                page_height_pt,
+                                rotation,
+                                flip_y,
+                            )
+                            span_style = {
+                                "font_size_pt": float(span.get("size", font_size_pt)),
+                                "font_family": span.get("font", font_family),
+                                "is_bold": "bold" in span.get("font", "").lower(),
+                                "is_italic": "italic" in span.get("font", "").lower(),
+                                "color": color,
+                            }
+                            line_spans.append(
+                                {
+                                    "text": span_text,
+                                    "bbox": span_bbox_norm,
+                                    "style": span_style,
+                                }
+                            )
 
-                            block_text += span.get("text", "")
+                            block_text += span_text
                         block_text += "\n"
+                        line_text = "".join(line_text_parts)
+                        line_bbox_norm = _normalize_bbox(
+                            line_bbox,
+                            page_width_pt,
+                            page_height_pt,
+                            rotation,
+                            flip_y,
+                        )
+                        lines_payload.append(
+                            {
+                                "text": line_text,
+                                "bbox": line_bbox_norm,
+                                "spans": line_spans,
+                            }
+                        )
 
                     block_text = block_text.strip()
                     if not block_text:
                         continue
 
-                    bbox_norm = _normalize_bbox(block_bbox, page_width_pt, page_height_pt, rotation)
+                    bbox_norm = _normalize_bbox(
+                        block_bbox,
+                        page_width_pt,
+                        page_height_pt,
+                        rotation,
+                        flip_y,
+                    )
+                    line_height_pt = sum(line_heights) / len(line_heights) if line_heights else None
 
                     element_type: ElementType = "text"
                     if font_size_pt > 16:
@@ -166,9 +263,12 @@ class DocumentDecoder:
                         style={
                             "font_size_pt": font_size_pt,
                             "is_bold": is_bold,
+                            "is_italic": is_italic,
                             "color": color,
                             "font_family": font_family,
+                            "line_height": line_height_pt,
                         },
+                        lines=lines_payload,
                         page_index=page_idx,
                     )
 

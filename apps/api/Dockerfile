@@ -5,6 +5,7 @@ WORKDIR /app
 # Copy requirements from the build context (apps/api)
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m playwright install --with-deps chromium
 
 # Copy the rest of the API source
 COPY . .

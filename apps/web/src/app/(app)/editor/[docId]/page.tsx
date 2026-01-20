@@ -21,6 +21,7 @@ import {
   type ForgeOverlaySelection
 } from "@/lib/api";
 import { createBBoxConverter, type BBox } from "@/components/editor/overlayGeometry";
+import { getPageCanvasSize, normalizedToPixelRect } from "@/components/editor/pageCanvas";
 
 type SelectedOverlay = {
   page_index: number;
@@ -46,6 +47,7 @@ type ImageDimensions = {
 
 const EMPTY_OVERLAY: Record<number, OverlayPageState> = {};
 const DEBUG_OVERLAY_LIMIT = 60;
+const EDITOR_RENDER_MODE = (process.env.NEXT_PUBLIC_FORGE_EDITOR_RENDER_MODE || "html").toLowerCase();
 
 const getFontFamily = (pdfFont: string) => {
   const lower = pdfFont.toLowerCase();
@@ -521,6 +523,182 @@ export default function EditorPage() {
 type ForgeManifestPage = ForgeManifest["pages"][number];
 
 function OverlayPageCanvas({
+  page,
+  overlayState,
+  selectedOverlay,
+  showDebugOverlay,
+  onSelect
+}: {
+  page: ForgeManifestPage;
+  overlayState?: OverlayPageState;
+  selectedOverlay: SelectedOverlay | null;
+  showDebugOverlay: boolean;
+  onSelect: (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => void;
+}) {
+  if (EDITOR_RENDER_MODE === "png_overlay") {
+    return (
+      <LegacyOverlayCanvas
+        page={page}
+        overlayState={overlayState}
+        selectedOverlay={selectedOverlay}
+        showDebugOverlay={showDebugOverlay}
+        onSelect={onSelect}
+      />
+    );
+  }
+
+  return (
+    <HtmlPageCanvas
+      page={page}
+      overlayState={overlayState}
+      selectedOverlay={selectedOverlay}
+      showDebugOverlay={showDebugOverlay}
+      onSelect={onSelect}
+    />
+  );
+}
+
+function HtmlPageCanvas({
+  page,
+  overlayState,
+  selectedOverlay,
+  showDebugOverlay,
+  onSelect
+}: {
+  page: ForgeManifestPage;
+  overlayState?: OverlayPageState;
+  selectedOverlay: SelectedOverlay | null;
+  showDebugOverlay: boolean;
+  onSelect: (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const pageSize = useMemo(
+    () => getPageCanvasSize(containerWidth, page.width_pt, page.height_pt),
+    [containerWidth, page.height_pt, page.width_pt]
+  );
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const updateSize = () => {
+      setContainerWidth(container.clientWidth);
+    };
+
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(container);
+    updateSize();
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div ref={containerRef} className="w-full" data-page-index={page.page_index}>
+      <div
+        className="relative mx-auto max-w-full rounded-lg bg-white shadow-xl"
+        style={{
+          width: pageSize.width,
+          height: pageSize.height
+        }}
+      >
+        {page.elements.map((element) => {
+          const overlayEntry = overlayState?.entries?.[element.element_id];
+          const displayText = overlayEntry?.text ?? element.text;
+          const isSelected = selectedOverlay?.element_id === element.element_id;
+
+          const rect = normalizedToPixelRect(element.bbox as BBox, pageSize);
+
+          const fontFamily = getFontFamily(element.style.font_family || "");
+          const baseFontSize = (element.style.font_size_pt / page.width_pt) * pageSize.width;
+          const minFontSize = baseFontSize * 0.7;
+          let fontSize = baseFontSize;
+          const initialTextWidth = measureTextWidth(displayText, fontSize, fontFamily);
+          if (initialTextWidth > rect.width) {
+            const scaleFactor = rect.width / initialTextWidth;
+            fontSize = Math.max(baseFontSize * scaleFactor, minFontSize);
+          }
+          const scaledTextWidth = measureTextWidth(displayText, fontSize, fontFamily);
+
+          const lineCount = element.lines?.length || displayText.split("\n").length || 1;
+          const lineHeightPx =
+            element.style.line_height && page.width_pt
+              ? (element.style.line_height / page.width_pt) * pageSize.width
+              : rect.height / Math.max(1, lineCount);
+
+          const wrapPolicy =
+            element.style.wrap_policy ?? (element.element_type === "text" ? "auto" : "nowrap");
+          const shouldWrap =
+            wrapPolicy === "prewrap" ||
+            (wrapPolicy === "auto" &&
+              (displayText.includes("\n") || scaledTextWidth > rect.width * 1.05));
+          const needsClamp = wrapPolicy === "nowrap" && scaledTextWidth > rect.width;
+
+          return (
+            <div
+              key={element.element_id}
+              onClick={() => onSelect(page.page_index, element, overlayEntry)}
+              className={`absolute cursor-pointer pointer-events-auto transition-all duration-150 ${
+                isSelected
+                  ? "ring-2 ring-blue-500 bg-blue-500/10 z-20"
+                  : "hover:ring-1 hover:ring-blue-300/50 hover:bg-blue-300/5"
+              }`}
+              style={{
+                left: rect.left,
+                top: rect.top,
+                width: rect.width,
+                height: rect.height,
+                color: element.style.color || "#000",
+                fontSize,
+                fontWeight: element.style.is_bold ? "bold" : "normal",
+                fontStyle: element.style.is_italic ? "italic" : "normal",
+                fontFamily,
+                lineHeight: `${lineHeightPx}px`,
+                whiteSpace: shouldWrap ? "pre-wrap" : "nowrap",
+                overflow: "hidden",
+                textOverflow: needsClamp ? "ellipsis" : "clip",
+                padding: "0px",
+                display: "flex",
+                alignItems: "flex-start"
+              }}
+            >
+              {displayText}
+            </div>
+          );
+        })}
+
+        {showDebugOverlay
+          ? page.elements.slice(0, DEBUG_OVERLAY_LIMIT).map((element) => {
+              const rect = normalizedToPixelRect(element.bbox as BBox, pageSize);
+
+              return (
+                <div
+                  key={`debug_${element.element_id}`}
+                  style={{
+                    position: "absolute",
+                    left: rect.left,
+                    top: rect.top,
+                    width: rect.width,
+                    height: rect.height,
+                    border: "1px solid yellow",
+                    pointerEvents: "none"
+                  }}
+                >
+                  <span className="text-xs bg-yellow-500/50 px-1">{element.element_id}</span>
+                </div>
+              );
+            })
+          : null}
+      </div>
+    </div>
+  );
+}
+
+function LegacyOverlayCanvas({
   page,
   overlayState,
   selectedOverlay,

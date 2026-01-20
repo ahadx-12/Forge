@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     FORGE_MAX_UPLOAD_MB: int = 25
     FORGE_EXPORT_MASK_MODE: str = "AUTO_BG"
     FORGE_EXPORT_MASK_SOLID_COLOR: str = "255,255,255"
+    FORGE_RENDER_MODE: str = "html"
     FORGE_BUILD_VERSION: Optional[str] = None
     FORGE_OPENAI_MODEL: Optional[str] = None
     WEB_ORIGIN: Optional[str] = None

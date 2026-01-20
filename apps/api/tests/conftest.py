@@ -14,6 +14,7 @@ from tests.pdf_factory import make_contract_pdf_bytes, make_drawing_pdf_bytes, m
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
     os.environ["FORGE_STORAGE_LOCAL_DIR"] = str(tmp_path / ".data")
+    os.environ["FORGE_RENDER_MODE"] = "png_overlay"
     get_settings.cache_clear()
     return TestClient(app)
 

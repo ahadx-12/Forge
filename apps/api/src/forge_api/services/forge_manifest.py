@@ -11,6 +11,58 @@ from forge_api.services.storage import get_storage
 logger = logging.getLogger("forge_api.forge_manifest")
 
 
+def _rotated_dimensions(width_pt: float, height_pt: float, rotation: int) -> tuple[float, float]:
+    normalized = rotation % 360
+    if normalized in (90, 270):
+        return height_pt, width_pt
+    return width_pt, height_pt
+
+
+def _rotate_point(x: float, y: float, width_pt: float, height_pt: float, rotation: int) -> tuple[float, float]:
+    normalized = rotation % 360
+    if normalized == 90:
+        return y, width_pt - x
+    if normalized == 180:
+        return width_pt - x, height_pt - y
+    if normalized == 270:
+        return height_pt - y, x
+    return x, y
+
+
+def _bbox_pt_to_px(
+    bbox_pt: list[float] | tuple[float, float, float, float],
+    *,
+    scale_x: float,
+    scale_y: float,
+    page_width_pt: float,
+    page_height_pt: float,
+    rotation: int,
+) -> list[float]:
+    x0_pt, y0_pt, x1_pt, y1_pt = bbox_pt
+    corners = [
+        (x0_pt, y0_pt),
+        (x1_pt, y0_pt),
+        (x1_pt, y1_pt),
+        (x0_pt, y1_pt),
+    ]
+    rotated = [_rotate_point(x, y, page_width_pt, page_height_pt, rotation) for x, y in corners]
+    xs = [point[0] for point in rotated]
+    ys = [point[1] for point in rotated]
+    x0_rot, x1_rot = min(xs), max(xs)
+    y0_rot, y1_rot = min(ys), max(ys)
+    rotated_width_pt, rotated_height_pt = _rotated_dimensions(page_width_pt, page_height_pt, rotation)
+
+    y0_top = rotated_height_pt - y1_rot
+    y1_top = rotated_height_pt - y0_rot
+
+    return [
+        x0_rot * scale_x,
+        y0_top * scale_y,
+        x1_rot * scale_x,
+        y1_top * scale_y,
+    ]
+
+
 def _manifest_key(doc_id: str) -> str:
     return f"docs/{doc_id}/forge/manifest.json"
 

@@ -1,19 +1,13 @@
 import Link from "next/link";
-import type { Route } from "next";
 import { FileText, Grid2x2, LayoutPanelLeft, Settings } from "lucide-react";
 
-type NavItem = {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  href: Route;
-};
-
-const navItems: readonly NavItem[] = [
-  { icon: Grid2x2, label: "Dashboard", href: "/dashboard" as Route },
-  { icon: FileText, label: "Documents", href: "/documents" as Route },
-  { icon: LayoutPanelLeft, label: "Editor", href: "/editor" as Route },
-  { icon: Settings, label: "Settings", href: "/settings" as Route },
+const navItems = [
+  { icon: FileText, label: "Documents", href: "/documents" },
+  { icon: LayoutPanelLeft, label: "Editor", href: "/editor" },
+  { icon: Settings, label: "Settings", href: "/settings" },
 ] as const;
+
+type NavItem = (typeof navItems)[number];
 
 export function SideBar() {
   return (
