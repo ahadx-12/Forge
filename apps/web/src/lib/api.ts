@@ -182,8 +182,10 @@ export type ForgeManifestItem = {
   forge_id: string;
   text: string;
   bbox: number[];
+  bbox_pt?: number[];
   font: string;
   size: number;
+  size_pt?: number;
   color: string;
   content_hash: string;
 };
@@ -192,6 +194,9 @@ export type ForgeManifestPage = {
   index: number;
   width_pt: number;
   height_pt: number;
+  width_px?: number;
+  height_px?: number;
+  scale?: number;
   rotation: number;
   image_path: string;
   items: ForgeManifestItem[];

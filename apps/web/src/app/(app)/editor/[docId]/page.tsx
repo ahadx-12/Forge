@@ -29,6 +29,7 @@ type SelectedOverlay = {
 };
 
 const EMPTY_OVERLAY: Record<number, Record<string, ForgeOverlayEntry>> = {};
+const DEBUG_OVERLAY_LIMIT = 60;
 
 export default function EditorPage() {
   const params = useParams<{ docId: string }>();
@@ -50,6 +51,7 @@ export default function EditorPage() {
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [maskMode, setMaskMode] = useState<ExportMaskMode>("AUTO_BG");
+  const [showDebugOverlay, setShowDebugOverlay] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,9 +298,22 @@ export default function EditorPage() {
         </div>
 
         <div className="flex h-full flex-col gap-4">
-          <div className="flex items-center justify-between rounded-2xl border border-forge-border bg-forge-card/70 px-4 py-3">
-            <div className="text-sm text-slate-300">Overlay editor</div>
-            <div className="text-xs text-slate-400">Click text to edit</div>
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-forge-border bg-forge-card/70 px-4 py-3">
+            <div>
+              <div className="text-sm text-slate-300">Overlay editor</div>
+              <div className="text-xs text-slate-500">Click text to edit</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowDebugOverlay((prev) => !prev)}
+              className={`rounded-full border px-3 py-1 text-xs ${
+                showDebugOverlay
+                  ? "border-forge-accent text-forge-accent"
+                  : "border-forge-border text-slate-400"
+              }`}
+            >
+              {showDebugOverlay ? "Debug on" : "Debug off"}
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto scroll-smooth rounded-2xl border border-forge-border bg-forge-panel/50 p-4">
@@ -307,52 +322,80 @@ export default function EditorPage() {
             ) : (
               manifest.pages.map((page) => {
                 const overlayMap = overlayByPage[page.index] ?? {};
+                const pageWidth = page.width_px ?? page.width_pt;
+                const pageHeight = page.height_px ?? page.height_pt;
+                const pageScale = page.scale ?? 1;
                 return (
                   <div key={`page_${page.index}`} id={`page-${page.index + 1}`} className="mb-6 flex justify-center">
-                    <div
-                      className="relative shadow-xl"
-                      style={{ width: page.width_pt, height: page.height_pt }}
-                    >
+                    <div className="relative shadow-xl" style={{ width: pageWidth, height: pageHeight }}>
                       <img
                         src={apiUrl(page.image_path)}
                         alt={`Page ${page.index + 1}`}
                         className="absolute inset-0 h-full w-full"
                       />
-                      {page.items.map((item) => {
-                        const overlayEntry = overlayMap[item.forge_id];
-                        const displayText = overlayEntry?.text ?? item.text;
-                        const isSelected = selectedOverlay?.forge_id === item.forge_id;
-                        const [x0, y0, x1, y1] = item.bbox;
-                        return (
-                          <div
-                            key={item.forge_id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => handleSelect(page.index, item, overlayEntry)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                handleSelect(page.index, item, overlayEntry);
-                              }
-                            }}
-                            className={`absolute cursor-pointer select-none rounded-sm px-0.5 text-[10px] leading-none ${
-                              isSelected ? "ring-2 ring-forge-accent" : "hover:ring-1 hover:ring-forge-accent/50"
-                            }`}
-                            style={{
-                              left: x0,
-                              top: y0,
-                              width: x1 - x0,
-                              height: y1 - y0,
-                              color: item.color,
-                              fontSize: item.size,
-                              fontFamily: "Helvetica, Arial, sans-serif",
-                              whiteSpace: "pre",
-                              overflow: "hidden"
-                            }}
-                          >
-                            {displayText}
-                          </div>
-                        );
-                      })}
+                      <div className="absolute inset-0">
+                        {page.items.map((item) => {
+                          const overlayEntry = overlayMap[item.forge_id];
+                          const displayText = overlayEntry?.text ?? item.text;
+                          const isSelected = selectedOverlay?.forge_id === item.forge_id;
+                          const [x0, y0, x1, y1] = item.bbox;
+                          return (
+                            <div
+                              key={item.forge_id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => handleSelect(page.index, item, overlayEntry)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  handleSelect(page.index, item, overlayEntry);
+                                }
+                              }}
+                              className={`absolute cursor-pointer select-none rounded-sm px-0.5 leading-none ${
+                                isSelected ? "ring-2 ring-forge-accent" : "hover:ring-1 hover:ring-forge-accent/50"
+                              }`}
+                              style={{
+                                left: x0,
+                                top: y0,
+                                width: x1 - x0,
+                                height: y1 - y0,
+                                color: item.color,
+                                fontSize: item.size || 10 * pageScale,
+                                fontFamily: "Helvetica, Arial, sans-serif",
+                                lineHeight: 1,
+                                whiteSpace: "pre",
+                                overflow: "hidden",
+                                transformOrigin: "top left",
+                                pointerEvents: "auto"
+                              }}
+                            >
+                              {displayText}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {showDebugOverlay ? (
+                        <div className="absolute inset-0 pointer-events-none">
+                          {page.items.slice(0, DEBUG_OVERLAY_LIMIT).map((item) => {
+                            const [x0, y0, x1, y1] = item.bbox;
+                            return (
+                              <div
+                                key={`debug_${item.forge_id}`}
+                                className="absolute border border-amber-400/80 text-[10px] text-amber-200"
+                                style={{
+                                  left: x0,
+                                  top: y0,
+                                  width: x1 - x0,
+                                  height: y1 - y0
+                                }}
+                              >
+                                <span className="absolute -top-4 left-0 rounded bg-amber-500/20 px-1">
+                                  {item.forge_id}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 );

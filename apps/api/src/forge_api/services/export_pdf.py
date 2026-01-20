@@ -236,7 +236,7 @@ def export_pdf_with_overlays(
                             continue
                         if overlay.get("text") == base_item.get("text"):
                             continue
-                        bbox = base_item.get("bbox") or [0.0, 0.0, 0.0, 0.0]
+                        bbox = base_item.get("bbox_pt") or base_item.get("bbox") or [0.0, 0.0, 0.0, 0.0]
                         fill_color = solid_color
                         if requested_mode == "AUTO_BG":
                             sampled = _sample_background_color(page, fitz.Rect(bbox))
@@ -247,7 +247,7 @@ def export_pdf_with_overlays(
                                 fill_color = sampled
                         _overlay_rect(page, bbox, padding_pt, fill_color)
                         font_name = _overlay_font(base_item.get("font"))
-                        font_size = float(base_item.get("size") or 12)
+                        font_size = float(base_item.get("size_pt") or base_item.get("size") or 12)
                         color = _hex_to_rgb(base_item.get("color"))
                         x0, y0, x1, y1 = bbox
                         text_value = overlay.get("text") or ""

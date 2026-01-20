@@ -30,17 +30,6 @@ Ensure the ID is selection.element_id and old_text matches selection.text.
 """
 
 
-def _extract_json(text: str) -> str:
-    text = text.strip()
-    if text.startswith("{"):
-        return text
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1:
-        raise ValueError("No JSON object found")
-    return text[start : end + 1]
-
-
 def _validate_ops(payload: dict[str, Any], selection_id: str, selection_text: str | None, page_index: int) -> PatchProposal:
     if "ops" not in payload or "rationale_short" not in payload:
         raise ValueError("Missing keys")
@@ -123,24 +112,22 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
     }
 
     client = OpenAIClient()
-    response_text = client.response_json(
+    response_payload = client.response_json(
         system=SYSTEM_PROMPT,
         user=json.dumps(prompt, ensure_ascii=False),
     )
 
     try:
-        payload = json.loads(_extract_json(response_text))
-        return _validate_ops(payload, selection_id, selection_text, request.page_index)
+        return _validate_ops(response_payload, selection_id, selection_text, request.page_index)
     except AIError:
         raise
     except Exception as exc:
-        retry_text = client.response_json(
+        retry_payload = client.response_json(
             system=SYSTEM_PROMPT + "\n" + STRICT_RETRY_PROMPT,
             user=json.dumps(prompt, ensure_ascii=False),
         )
         try:
-            payload = json.loads(_extract_json(retry_text))
-            return _validate_ops(payload, selection_id, selection_text, request.page_index)
+            return _validate_ops(retry_payload, selection_id, selection_text, request.page_index)
         except AIError:
             raise
         except Exception as retry_exc:

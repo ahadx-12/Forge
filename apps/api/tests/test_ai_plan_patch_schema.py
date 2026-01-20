@@ -10,14 +10,14 @@ def test_ai_plan_patch_schema(monkeypatch, client, upload_pdf):
     base_ir = client.get(f"/v1/ir/{doc_id}?page=0").json()
     target = next(item for item in base_ir["primitives"] if item["kind"] == "path")
 
-    def fake_response_json(system: str, user: str) -> str:
-        return (
-            '{"ops":[{"op":"set_style","target_id":"%s","stroke_color":[0,1,0]}],'
-            '"rationale_short":"Make it green"}'
-        ) % target["id"]
+    def fake_response_json(system: str, user: str) -> dict:
+        return {
+            "ops": [{"op": "set_style", "target_id": target["id"], "stroke_color": [0, 1, 0]}],
+            "rationale_short": "Make it green",
+        }
 
     class FakeClient:
-        def response_json(self, system: str, user: str) -> str:
+        def response_json(self, system: str, user: str) -> dict:
             return fake_response_json(system, user)
 
     monkeypatch.setattr(ai_patch_planner, "OpenAIClient", lambda: FakeClient())
