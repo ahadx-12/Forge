@@ -36,8 +36,19 @@ def test_forge_manifest_overlay_export(client, upload_pdf):
     }
     commit = client.post(f"/v1/documents/{doc_id}/forge/overlay/commit", json=overlay_payload)
     assert commit.status_code == 200
-    overlay_entries = commit.json()["overlay"]
+    commit_payload = commit.json()
+    overlay_entries = commit_payload["overlay"]
     assert any(entry["text"] == "Forge Pact" for entry in overlay_entries)
+    masks = commit_payload["masks"]
+    assert masks
+    mask_bbox = masks[0]["bbox_px"]
+    expected_bbox = [
+        first_item["bbox"][0] - 2,
+        first_item["bbox"][1] - 2,
+        first_item["bbox"][2] + 2,
+        first_item["bbox"][3] + 2,
+    ]
+    assert mask_bbox == expected_bbox
 
     overlay = client.get(f"/v1/documents/{doc_id}/forge/overlay?page_index=0")
     assert overlay.status_code == 200

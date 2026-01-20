@@ -52,11 +52,30 @@ def get_forge_overlay(doc_id: str, page_index: int = Query(..., ge=0)) -> dict:
     patchsets = load_overlay_patch_log(doc_id)
     overlay_state = build_overlay_state(manifest, patchsets)
     page_overlay = overlay_state.get(page_index, {})
+    page_primitives = page_overlay.get("primitives", {})
     entries = [
-        {"forge_id": forge_id, "text": data["text"], "content_hash": data["content_hash"]}
-        for forge_id, data in page_overlay.items()
+        {
+            "forge_id": forge_id,
+            "text": data["text"],
+            "content_hash": data["content_hash"],
+            "bbox_px": data.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+        }
+        for forge_id, data in page_primitives.items()
     ]
-    return {"doc_id": doc_id, "page_index": page_index, "overlay": entries}
+    manifest_pages = {page.get("index"): page for page in manifest.get("pages", [])}
+    manifest_page = manifest_pages.get(page_index, {})
+    return {
+        "doc_id": doc_id,
+        "page_index": page_index,
+        "overlay": entries,
+        "masks": page_overlay.get("masks", []),
+        "page_image_width_px": manifest_page.get("width_px"),
+        "page_image_height_px": manifest_page.get("height_px"),
+        "pdf_box_width_pt": manifest_page.get("width_pt"),
+        "pdf_box_height_pt": manifest_page.get("height_pt"),
+        "rotation": manifest_page.get("rotation"),
+        "used_box": "cropbox",
+    }
 
 
 @router.post("/{doc_id}/forge/overlay/commit", response_model=OverlayPatchCommitResponse)
@@ -129,7 +148,8 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
                 message="Overlay op hash does not match selection",
                 details={"forge_id": op.forge_id},
             )
-        current_hash = overlay_state.get(payload.page_index, {}).get(op.forge_id, {}).get("content_hash")
+        page_primitives = overlay_state.get(payload.page_index, {}).get("primitives", {})
+        current_hash = page_primitives.get(op.forge_id, {}).get("content_hash")
         if current_hash and current_hash != op.old_hash:
             raise APIError(
                 status_code=409,
@@ -141,8 +161,18 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
     record = append_overlay_patchset(doc_id, payload.ops)
     overlay_state = build_overlay_state(manifest, load_overlay_patch_log(doc_id))
     page_overlay = overlay_state.get(payload.page_index, {})
+    page_primitives = page_overlay.get("primitives", {})
     entries = [
-        {"forge_id": forge_id, "text": data["text"], "content_hash": data["content_hash"]}
-        for forge_id, data in page_overlay.items()
+        {
+            "forge_id": forge_id,
+            "text": data["text"],
+            "content_hash": data["content_hash"],
+            "bbox_px": data.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+        }
+        for forge_id, data in page_primitives.items()
     ]
-    return OverlayPatchCommitResponse(patchset=record, overlay=entries)
+    return OverlayPatchCommitResponse(
+        patchset=record,
+        overlay=entries,
+        masks=page_overlay.get("masks", []),
+    )

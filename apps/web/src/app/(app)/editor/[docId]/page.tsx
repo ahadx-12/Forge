@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { FileText, MessageSquareText, Send } from "lucide-react";
 
@@ -16,9 +16,12 @@ import {
   type ForgeManifest,
   type ForgeManifestItem,
   type ForgeOverlayEntry,
+  type ForgeOverlayMask,
   type ForgeOverlayPlanResponse,
   type ForgeOverlaySelection
 } from "@/lib/api";
+import { computeOverlayScale } from "@/lib/overlay";
+import { OverlayLayerStack } from "@/components/editor/OverlayLayerStack";
 
 type SelectedOverlay = {
   page_index: number;
@@ -28,7 +31,14 @@ type SelectedOverlay = {
   content_hash: string;
 };
 
-const EMPTY_OVERLAY: Record<number, Record<string, ForgeOverlayEntry>> = {};
+type OverlayPageState = {
+  entries: Record<string, ForgeOverlayEntry>;
+  masks: ForgeOverlayMask[];
+  pageImageWidthPx?: number;
+  pageImageHeightPx?: number;
+};
+
+const EMPTY_OVERLAY: Record<number, OverlayPageState> = {};
 const DEBUG_OVERLAY_LIMIT = 60;
 
 export default function EditorPage() {
@@ -39,7 +49,7 @@ export default function EditorPage() {
   const [sizeBytes, setSizeBytes] = useState(0);
   const [activePage, setActivePage] = useState(1);
   const [manifest, setManifest] = useState<ForgeManifest | null>(null);
-  const [overlayByPage, setOverlayByPage] = useState<Record<number, Record<string, ForgeOverlayEntry>>>(
+  const [overlayByPage, setOverlayByPage] = useState<Record<number, OverlayPageState>>(
     EMPTY_OVERLAY
   );
   const [selectedOverlay, setSelectedOverlay] = useState<SelectedOverlay | null>(null);
@@ -97,19 +107,27 @@ export default function EditorPage() {
             const response = await getForgeOverlay(docId, page.index);
             return {
               pageIndex: page.index,
-              overlay: response.overlay
+              overlay: response.overlay,
+              masks: response.masks,
+              pageImageWidthPx: response.page_image_width_px,
+              pageImageHeightPx: response.page_image_height_px
             };
           })
         );
         if (cancelled) {
           return;
         }
-        const nextOverlay: Record<number, Record<string, ForgeOverlayEntry>> = {};
-        overlays.forEach(({ pageIndex, overlay }) => {
-          nextOverlay[pageIndex] = overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
-            acc[entry.forge_id] = entry;
-            return acc;
-          }, {});
+        const nextOverlay: Record<number, OverlayPageState> = {};
+        overlays.forEach(({ pageIndex, overlay, masks, pageImageWidthPx, pageImageHeightPx }) => {
+          nextOverlay[pageIndex] = {
+            entries: overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
+              acc[entry.forge_id] = entry;
+              return acc;
+            }, {}),
+            masks,
+            pageImageWidthPx,
+            pageImageHeightPx
+          };
         });
         setOverlayByPage(nextOverlay);
       } catch (err) {
@@ -220,10 +238,15 @@ export default function EditorPage() {
       });
       setOverlayByPage((prev) => ({
         ...prev,
-        [selectedOverlay.page_index]: response.overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
-          acc[entry.forge_id] = entry;
-          return acc;
-        }, {})
+        [selectedOverlay.page_index]: {
+          entries: response.overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
+            acc[entry.forge_id] = entry;
+            return acc;
+          }, {}),
+          masks: response.masks,
+          pageImageWidthPx: prev[selectedOverlay.page_index]?.pageImageWidthPx,
+          pageImageHeightPx: prev[selectedOverlay.page_index]?.pageImageHeightPx
+        }
       }));
       const updatedEntry = response.overlay.find((entry) => entry.forge_id === selectedOverlay.forge_id);
       if (updatedEntry) {
@@ -321,82 +344,16 @@ export default function EditorPage() {
               <div className="text-sm text-slate-400">Loading document…</div>
             ) : (
               manifest.pages.map((page) => {
-                const overlayMap = overlayByPage[page.index] ?? {};
-                const pageWidth = page.width_px ?? page.width_pt;
-                const pageHeight = page.height_px ?? page.height_pt;
-                const pageScale = page.scale ?? 1;
+                const overlayState = overlayByPage[page.index];
                 return (
                   <div key={`page_${page.index}`} id={`page-${page.index + 1}`} className="mb-6 flex justify-center">
-                    <div className="relative shadow-xl" style={{ width: pageWidth, height: pageHeight }}>
-                      <img
-                        src={apiUrl(page.image_path)}
-                        alt={`Page ${page.index + 1}`}
-                        className="absolute inset-0 h-full w-full"
-                      />
-                      <div className="absolute inset-0">
-                        {page.items.map((item) => {
-                          const overlayEntry = overlayMap[item.forge_id];
-                          const displayText = overlayEntry?.text ?? item.text;
-                          const isSelected = selectedOverlay?.forge_id === item.forge_id;
-                          const [x0, y0, x1, y1] = item.bbox;
-                          return (
-                            <div
-                              key={item.forge_id}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => handleSelect(page.index, item, overlayEntry)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  handleSelect(page.index, item, overlayEntry);
-                                }
-                              }}
-                              className={`absolute cursor-pointer select-none rounded-sm px-0.5 leading-none ${
-                                isSelected ? "ring-2 ring-forge-accent" : "hover:ring-1 hover:ring-forge-accent/50"
-                              }`}
-                              style={{
-                                left: x0,
-                                top: y0,
-                                width: x1 - x0,
-                                height: y1 - y0,
-                                color: item.color,
-                                fontSize: item.size || 10 * pageScale,
-                                fontFamily: "Helvetica, Arial, sans-serif",
-                                lineHeight: 1,
-                                whiteSpace: "pre",
-                                overflow: "hidden",
-                                transformOrigin: "top left",
-                                pointerEvents: "auto"
-                              }}
-                            >
-                              {displayText}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {showDebugOverlay ? (
-                        <div className="absolute inset-0 pointer-events-none">
-                          {page.items.slice(0, DEBUG_OVERLAY_LIMIT).map((item) => {
-                            const [x0, y0, x1, y1] = item.bbox;
-                            return (
-                              <div
-                                key={`debug_${item.forge_id}`}
-                                className="absolute border border-amber-400/80 text-[10px] text-amber-200"
-                                style={{
-                                  left: x0,
-                                  top: y0,
-                                  width: x1 - x0,
-                                  height: y1 - y0
-                                }}
-                              >
-                                <span className="absolute -top-4 left-0 rounded bg-amber-500/20 px-1">
-                                  {item.forge_id}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-                    </div>
+                    <OverlayPageCanvas
+                      page={page}
+                      overlayState={overlayState}
+                      selectedOverlay={selectedOverlay}
+                      showDebugOverlay={showDebugOverlay}
+                      onSelect={handleSelect}
+                    />
                   </div>
                 );
               })
@@ -519,6 +476,110 @@ export default function EditorPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+type ForgeManifestPage = ForgeManifest["pages"][number];
+
+type ImageDimensions = {
+  naturalWidth: number;
+  naturalHeight: number;
+  clientWidth: number;
+  clientHeight: number;
+};
+
+function OverlayPageCanvas({
+  page,
+  overlayState,
+  selectedOverlay,
+  showDebugOverlay,
+  onSelect
+}: {
+  page: ForgeManifestPage;
+  overlayState?: OverlayPageState;
+  selectedOverlay: SelectedOverlay | null;
+  showDebugOverlay: boolean;
+  onSelect: (pageIndex: number, item: ForgeManifestItem, overlayEntry?: ForgeOverlayEntry) => void;
+}) {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [dimensions, setDimensions] = useState<ImageDimensions>({
+    naturalWidth: 0,
+    naturalHeight: 0,
+    clientWidth: 0,
+    clientHeight: 0
+  });
+
+  useEffect(() => {
+    const img = imgRef.current;
+    if (!img) {
+      return;
+    }
+    const updateClient = () => {
+      setDimensions((prev) => ({
+        ...prev,
+        clientWidth: img.clientWidth,
+        clientHeight: img.clientHeight
+      }));
+    };
+    const observer = new ResizeObserver(() => updateClient());
+    observer.observe(img);
+    updateClient();
+    return () => observer.disconnect();
+  }, []);
+
+  const handleImageLoad = () => {
+    const img = imgRef.current;
+    if (!img) {
+      return;
+    }
+    setDimensions((prev) => ({
+      ...prev,
+      naturalWidth: img.naturalWidth,
+      naturalHeight: img.naturalHeight,
+      clientWidth: img.clientWidth,
+      clientHeight: img.clientHeight
+    }));
+  };
+
+  const { scaleX, scaleY } = computeOverlayScale(dimensions);
+  const overlayMap = overlayState?.entries ?? {};
+  const masks = overlayState?.masks ?? [];
+  const hasImageSize = dimensions.naturalWidth > 0 && dimensions.clientWidth > 0;
+
+  return (
+    <div className="relative inline-block max-w-full shadow-xl">
+      <img
+        ref={imgRef}
+        src={apiUrl(page.image_path)}
+        alt={`Page ${page.index + 1}`}
+        className="block h-auto max-w-full"
+        onLoad={handleImageLoad}
+      />
+      {hasImageSize ? (
+        <div className="absolute inset-0">
+          <div
+            className="relative"
+            style={{
+              width: dimensions.naturalWidth,
+              height: dimensions.naturalHeight,
+              transform: `scale(${scaleX}, ${scaleY})`,
+              transformOrigin: "top left"
+            }}
+          >
+            <OverlayLayerStack
+              pageIndex={page.index}
+              items={page.items}
+              overlayMap={overlayMap}
+              masks={masks}
+              selectedForgeId={selectedOverlay?.forge_id}
+              showDebugOverlay={showDebugOverlay}
+              debugLimit={DEBUG_OVERLAY_LIMIT}
+              onSelect={onSelect}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
