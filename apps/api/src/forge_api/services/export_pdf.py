@@ -81,13 +81,62 @@ def _hex_to_rgb(value: str | None) -> tuple[float, float, float]:
         return (0.0, 0.0, 0.0)
 
 
-def _overlay_font(font_name: str | None) -> str:
+def _overlay_font(font_name: str | None, is_bold: bool = False) -> str:
+    if is_bold:
+        return "helvB"
     if not font_name:
         return DEFAULT_FONT
     lower = font_name.lower()
     if "bold" in lower or "black" in lower:
         return "helvB"
     return "helv"
+
+
+def _rotated_dimensions(width_pt: float, height_pt: float, rotation: int) -> tuple[float, float]:
+    normalized = rotation % 360
+    if normalized in (90, 270):
+        return height_pt, width_pt
+    return width_pt, height_pt
+
+
+def _inverse_rotate_point(x: float, y: float, width_pt: float, height_pt: float, rotation: int) -> tuple[float, float]:
+    normalized = rotation % 360
+    if normalized == 90:
+        return width_pt - y, x
+    if normalized == 180:
+        return width_pt - x, height_pt - y
+    if normalized == 270:
+        return y, height_pt - x
+    return x, y
+
+
+def _normalized_bbox_to_pdf_rect(bbox: list[float], page: fitz.Page, rotation: int) -> fitz.Rect:
+    if len(bbox) < 4:
+        bbox = [0.0, 0.0, 0.0, 0.0]
+    page_width_pt = page.rect.width
+    page_height_pt = page.rect.height
+    rotated_width_pt, rotated_height_pt = _rotated_dimensions(page_width_pt, page_height_pt, rotation)
+
+    x0 = bbox[0] * rotated_width_pt
+    x1 = bbox[2] * rotated_width_pt
+    y0 = bbox[1] * rotated_height_pt
+    y1 = bbox[3] * rotated_height_pt
+
+    x0_bl = x0
+    x1_bl = x1
+    y0_bl = rotated_height_pt - y1
+    y1_bl = rotated_height_pt - y0
+
+    corners = [
+        (x0_bl, y0_bl),
+        (x1_bl, y0_bl),
+        (x1_bl, y1_bl),
+        (x0_bl, y1_bl),
+    ]
+    rotated_back = [_inverse_rotate_point(x, y, page_width_pt, page_height_pt, rotation) for x, y in corners]
+    xs = [point[0] for point in rotated_back]
+    ys = [point[1] for point in rotated_back]
+    return fitz.Rect(min(xs), min(ys), max(xs), max(ys))
 
 
 def _sample_background_color(page: fitz.Page, rect: fitz.Rect) -> tuple[float, float, float] | None:
@@ -226,35 +275,35 @@ def export_pdf_with_overlays(
                         _draw_text(page, primitive, primitive.bbox, doc_id, page_index)
 
             if manifest and overlay_state:
-                manifest_pages = {page_item.get("index"): page_item for page_item in manifest.get("pages", [])}
+                manifest_pages = {page_item.get("page_index"): page_item for page_item in manifest.get("pages", [])}
                 manifest_page = manifest_pages.get(page_index)
                 if manifest_page:
-                    manifest_items = {item.get("forge_id"): item for item in manifest_page.get("items", [])}
+                    manifest_items = {item.get("element_id"): item for item in manifest_page.get("elements", [])}
                     page_overlay = overlay_state.get(page_index, {})
-                    for forge_id, overlay in page_overlay.get("primitives", {}).items():
-                        base_item = manifest_items.get(forge_id)
+                    for element_id, overlay in page_overlay.get("primitives", {}).items():
+                        base_item = manifest_items.get(element_id)
                         if not base_item:
                             continue
                         if overlay.get("text") == base_item.get("text"):
                             continue
-                        bbox = base_item.get("bbox_pt") or base_item.get("bbox") or [0.0, 0.0, 0.0, 0.0]
+                        rect = _normalized_bbox_to_pdf_rect(base_item.get("bbox") or [0.0, 0.0, 0.0, 0.0], page, page.rotation)
                         fill_color = solid_color
                         if requested_mode == "AUTO_BG":
-                            sampled = _sample_background_color(page, fitz.Rect(bbox))
+                            sampled = _sample_background_color(page, rect)
                             if sampled is None:
                                 warning = "AUTO_BG_FAILED"
                                 fill_color = solid_color
                             else:
                                 fill_color = sampled
-                        _overlay_rect(page, bbox, padding_pt, fill_color)
-                        font_name = _overlay_font(base_item.get("font"))
-                        font_size = float(base_item.get("size_pt") or base_item.get("size") or 12)
-                        color = _hex_to_rgb(base_item.get("color"))
-                        x0, y0, x1, y1 = bbox
+                        _overlay_rect(page, list(rect), padding_pt, fill_color)
+                        style = base_item.get("style") or {}
+                        font_name = _overlay_font(style.get("font_family"), bool(style.get("is_bold")))
+                        font_size = float(style.get("font_size_pt") or 12)
+                        color = _hex_to_rgb(style.get("color"))
                         text_value = overlay.get("text") or ""
                         try:
                             page.insert_text(
-                                (x0, max(y0 + 1, y1 - 1)),
+                                (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
                                 text_value,
                                 fontname=font_name,
                                 fontsize=font_size,
@@ -262,7 +311,7 @@ def export_pdf_with_overlays(
                             )
                         except (RuntimeError, ValueError):
                             page.insert_text(
-                                (x0, max(y0 + 1, y1 - 1)),
+                                (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
                                 text_value,
                                 fontname=DEFAULT_FONT,
                                 fontsize=font_size,

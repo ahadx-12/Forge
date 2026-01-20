@@ -147,20 +147,22 @@ class PatchPlanResponse(BaseModel):
 class OverlaySelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    forge_id: str
+    element_id: str
     text: str
     content_hash: str
     bbox: list[float]
+    element_type: str | None = None
+    style: dict[str, object] | None = None
 
 
 class OverlayPatchOp(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["replace_overlay_text"]
-    page_index: int
-    forge_id: str
-    old_hash: str
+    type: Literal["replace_element"]
+    element_id: str
+    old_text: str | None = None
     new_text: str
+    style_changes: dict[str, object] | None = None
 
 
 class OverlayPatchPlan(BaseModel):
@@ -168,6 +170,7 @@ class OverlayPatchPlan(BaseModel):
 
     schema_version: int
     ops: list[OverlayPatchOp]
+    warnings: list[str] | None = None
 
 
 class OverlayPatchPlanRequest(BaseModel):
@@ -195,14 +198,14 @@ class OverlayPatchRecord(BaseModel):
 
 
 class OverlayEntry(BaseModel):
-    forge_id: str
+    element_id: str
     text: str
     content_hash: str
-    bbox_px: list[float]
 
 
 class OverlayMask(BaseModel):
-    bbox_px: list[float]
+    element_id: str | None = None
+    bbox: list[float]
     color: str
 
 

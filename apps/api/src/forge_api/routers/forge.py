@@ -26,6 +26,16 @@ def get_forge_manifest(doc_id: str) -> dict:
         return build_forge_manifest(doc_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Document not found") from exc
+    except Exception as exc:
+        logger.error("Failed to decode PDF doc_id=%s error=%s", doc_id, exc)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "decode_failed",
+                "message": "This PDF could not be decoded. It may be corrupted or encrypted.",
+                "suggestion": "Try re-saving the PDF or removing password protection.",
+            },
+        ) from exc
 
 
 @router.get("/{doc_id}/forge/pages/{page_index}.png")
@@ -49,20 +59,29 @@ def get_forge_overlay(doc_id: str, page_index: int = Query(..., ge=0)) -> dict:
         manifest = build_forge_manifest(doc_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Document not found") from exc
+    except Exception as exc:
+        logger.error("Failed to decode PDF doc_id=%s error=%s", doc_id, exc)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "decode_failed",
+                "message": "This PDF could not be decoded. It may be corrupted or encrypted.",
+                "suggestion": "Try re-saving the PDF or removing password protection.",
+            },
+        ) from exc
     patchsets = load_overlay_patch_log(doc_id)
     overlay_state = build_overlay_state(manifest, patchsets)
     page_overlay = overlay_state.get(page_index, {})
     page_primitives = page_overlay.get("primitives", {})
     entries = [
         {
-            "forge_id": forge_id,
+            "element_id": element_id,
             "text": data["text"],
             "content_hash": data["content_hash"],
-            "bbox_px": data.get("bbox") or [0.0, 0.0, 0.0, 0.0],
         }
-        for forge_id, data in page_primitives.items()
+        for element_id, data in page_primitives.items()
     ]
-    manifest_pages = {page.get("index"): page for page in manifest.get("pages", [])}
+    manifest_pages = {page.get("page_index"): page for page in manifest.get("pages", [])}
     manifest_page = manifest_pages.get(page_index, {})
     return {
         "doc_id": doc_id,
@@ -106,56 +125,52 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
         manifest = build_forge_manifest(doc_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Document not found") from exc
+    except Exception as exc:
+        logger.error("Failed to decode PDF doc_id=%s error=%s", doc_id, exc)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "decode_failed",
+                "message": "This PDF could not be decoded. It may be corrupted or encrypted.",
+                "suggestion": "Try re-saving the PDF or removing password protection.",
+            },
+        ) from exc
 
-    selection_ids = {item.forge_id for item in payload.selection}
-    selection_hashes = {item.forge_id: item.content_hash for item in payload.selection}
-    if any(item.page_index != payload.page_index for item in payload.ops):
-        raise APIError(
-            status_code=409,
-            code="PATCH_OUT_OF_SCOPE",
-            message="Overlay ops must target the requested page",
-            details={"page_index": payload.page_index},
-        )
+    selection_ids = {item.element_id for item in payload.selection}
+    selection_hashes = {item.element_id: item.content_hash for item in payload.selection}
 
-    manifest_pages = {page.get("index"): page for page in manifest.get("pages", [])}
+    manifest_pages = {page.get("page_index"): page for page in manifest.get("pages", [])}
     manifest_page = manifest_pages.get(payload.page_index)
     if manifest_page is None:
         raise HTTPException(status_code=404, detail="Page not found")
-    manifest_ids = {item.get("forge_id") for item in manifest_page.get("items", [])}
+    manifest_ids = {item.get("element_id") for item in manifest_page.get("elements", [])}
 
     overlay_state = build_overlay_state(manifest, load_overlay_patch_log(doc_id))
+    page_primitives = overlay_state.get(payload.page_index, {}).get("primitives", {})
 
     for op in payload.ops:
-        if op.forge_id not in selection_ids:
+        if op.element_id not in selection_ids:
             raise APIError(
                 status_code=409,
                 code="PATCH_OUT_OF_SCOPE",
                 message="Overlay ops must target the selection",
-                details={"forge_id": op.forge_id},
+                details={"element_id": op.element_id},
             )
-        if op.forge_id not in manifest_ids:
+        if op.element_id not in manifest_ids:
             raise APIError(
                 status_code=409,
                 code="patch_target_not_found",
                 message="Overlay target not found",
-                details={"forge_id": op.forge_id},
+                details={"element_id": op.element_id},
             )
-        expected_hash = selection_hashes.get(op.forge_id)
-        if expected_hash and op.old_hash != expected_hash:
-            raise APIError(
-                status_code=409,
-                code="PATCH_CONFLICT",
-                message="Overlay op hash does not match selection",
-                details={"forge_id": op.forge_id},
-            )
-        page_primitives = overlay_state.get(payload.page_index, {}).get("primitives", {})
-        current_hash = page_primitives.get(op.forge_id, {}).get("content_hash")
-        if current_hash and current_hash != op.old_hash:
+        expected_hash = selection_hashes.get(op.element_id)
+        current_hash = page_primitives.get(op.element_id, {}).get("content_hash")
+        if expected_hash and current_hash and current_hash != expected_hash:
             raise APIError(
                 status_code=409,
                 code="PATCH_CONFLICT",
                 message="Overlay target content has changed",
-                details={"forge_id": op.forge_id},
+                details={"element_id": op.element_id},
             )
 
     record = append_overlay_patchset(doc_id, payload.ops)
@@ -164,12 +179,11 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
     page_primitives = page_overlay.get("primitives", {})
     entries = [
         {
-            "forge_id": forge_id,
+            "element_id": element_id,
             "text": data["text"],
             "content_hash": data["content_hash"],
-            "bbox_px": data.get("bbox") or [0.0, 0.0, 0.0, 0.0],
         }
-        for forge_id, data in page_primitives.items()
+        for element_id, data in page_primitives.items()
     ]
     return OverlayPatchCommitResponse(
         patchset=record,

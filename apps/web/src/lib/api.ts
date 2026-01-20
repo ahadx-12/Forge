@@ -178,28 +178,29 @@ export type PatchPlanResponse = {
 
 export type ExportMaskMode = "SOLID" | "AUTO_BG";
 
-export type ForgeManifestItem = {
-  forge_id: string;
+export type ForgeManifestElement = {
+  element_id: string;
+  element_type: "text" | "heading" | "list_item" | "table_cell";
   text: string;
   bbox: number[];
-  bbox_pt?: number[];
-  font: string;
-  size: number;
-  size_pt?: number;
-  color: string;
-  content_hash: string;
+  style: {
+    font_size_pt: number;
+    is_bold: boolean;
+    color: string;
+    font_family: string;
+  };
+  page_index: number;
 };
 
 export type ForgeManifestPage = {
-  index: number;
+  page_index: number;
   width_pt: number;
   height_pt: number;
   width_px?: number;
   height_px?: number;
-  scale?: number;
   rotation: number;
   image_path: string;
-  items: ForgeManifestItem[];
+  elements: ForgeManifestElement[];
 };
 
 export type ForgeManifest = {
@@ -210,14 +211,14 @@ export type ForgeManifest = {
 };
 
 export type ForgeOverlayEntry = {
-  forge_id: string;
+  element_id: string;
   text: string;
   content_hash: string;
-  bbox_px: number[];
 };
 
 export type ForgeOverlayMask = {
-  bbox_px: number[];
+  element_id?: string | null;
+  bbox: number[];
   color: string;
 };
 
@@ -235,18 +236,20 @@ export type ForgeOverlayResponse = {
 };
 
 export type ForgeOverlaySelection = {
-  forge_id: string;
+  element_id: string;
   text: string;
   content_hash: string;
   bbox: number[];
+  element_type?: ForgeManifestElement["element_type"];
+  style?: ForgeManifestElement["style"];
 };
 
 export type ForgeOverlayPatchOp = {
-  type: "replace_overlay_text";
-  page_index: number;
-  forge_id: string;
-  old_hash: string;
+  type: "replace_element";
+  element_id: string;
+  old_text?: string | null;
   new_text: string;
+  style_changes?: Record<string, unknown> | null;
 };
 
 export type ForgeOverlayPlanRequest = {
@@ -259,6 +262,7 @@ export type ForgeOverlayPlanRequest = {
 export type ForgeOverlayPlanResponse = {
   schema_version: number;
   ops: ForgeOverlayPatchOp[];
+  warnings?: string[];
 };
 
 export type ForgeOverlayCommitRequest = {

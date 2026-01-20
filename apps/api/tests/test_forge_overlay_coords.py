@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def test_forge_manifest_bbox_px_bounds(client, upload_pdf):
+def test_forge_manifest_bbox_normalized_bounds(client, upload_pdf):
     response = upload_pdf("contract")
     doc_id = response.json()["document"]["doc_id"]
 
@@ -15,10 +15,9 @@ def test_forge_manifest_bbox_px_bounds(client, upload_pdf):
     assert width_px > 0
     assert height_px > 0
 
-    items = page["items"]
-    assert len(items) < 80
-    for item in items:
-        x0, y0, x1, y1 = item["bbox"]
-        assert 0 <= x0 <= x1 <= width_px
-        assert 0 <= y0 <= y1 <= height_px
-        assert "bbox_pt" in item
+    elements = page["elements"]
+    assert len(elements) < 20
+    for element in elements:
+        x0, y0, x1, y1 = element["bbox"]
+        assert 0 <= x0 <= x1 <= 1
+        assert 0 <= y0 <= y1 <= 1
