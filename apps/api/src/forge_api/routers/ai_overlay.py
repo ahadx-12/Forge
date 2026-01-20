@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -14,7 +13,13 @@ router = APIRouter(prefix="/v1/ai", tags=["ai"])
 logger = logging.getLogger("forge_api.ai_overlay")
 
 
-SYSTEM_PROMPT = "You are ForgePatchPlanner. You output only JSON. No markdown. No explanations."
+SYSTEM_PROMPT = (
+    "You are ForgePatchPlanner.\n"
+    "You MUST output ONLY raw JSON that matches this schema:\n"
+    '{ "schema_version": 1, "ops": [ { "type": "replace_overlay_text", "page_index": 0, '
+    '"forge_id": "string", "old_hash": "string", "new_text": "string" } ] }\n'
+    "Do not wrap in markdown. Do not include explanations."
+)
 
 
 def _build_user_prompt(payload: OverlayPatchPlanRequest) -> str:
@@ -62,13 +67,6 @@ def _build_user_prompt(payload: OverlayPatchPlanRequest) -> str:
     )
 
 
-def _parse_plan(raw_text: str) -> dict[str, Any]:
-    try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError("AI response was not valid JSON") from exc
-
-
 def _validate_plan(payload: OverlayPatchPlanRequest, data: dict[str, Any]) -> OverlayPatchPlan:
     plan = OverlayPatchPlan.model_validate(data)
     if plan.schema_version != 1:
@@ -98,8 +96,7 @@ def plan_overlay_patch(payload: OverlayPatchPlanRequest) -> dict[str, Any]:
     user_prompt = _build_user_prompt(payload)
     for attempt in range(2):
         try:
-            raw = client.response_json(SYSTEM_PROMPT, user_prompt)
-            data = _parse_plan(raw)
+            data = client.response_json(SYSTEM_PROMPT, user_prompt)
             plan = _validate_plan(payload, data)
             return plan.model_dump(mode="json")
         except ValueError as exc:
