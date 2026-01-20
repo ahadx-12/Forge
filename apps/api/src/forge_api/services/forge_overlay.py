@@ -44,71 +44,87 @@ def _compute_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _round(value: float) -> float:
+    return round(float(value), 4)
+
+
+def _build_overlay_mask(
+    element_id: str,
+    bbox: list[float],
+    padding: float = 0.01,
+    color: str = "#ffffff",
+) -> dict[str, Any]:
+    if len(bbox) < 4:
+        bbox = [0.0, 0.0, 0.0, 0.0]
+    x0, y0, x1, y1 = [float(value) for value in bbox]
+    return {
+        "element_id": element_id,
+        "bbox": [
+            _round(max(0.0, x0 - padding)),
+            _round(max(0.0, y0 - padding)),
+            _round(min(1.0, x1 + padding)),
+            _round(min(1.0, y1 + padding)),
+        ],
+        "color": color,
+    }
+
+
 def build_overlay_state(
     manifest: dict[str, Any],
     patchsets: list[OverlayPatchRecord],
 ) -> dict[int, dict[str, Any]]:
     overlay: dict[int, dict[str, Any]] = {}
-    masks_by_page: dict[int, dict[str, dict[str, Any]]] = {}
+    element_lookup: dict[str, dict[str, Any]] = {}
+
     for page in manifest.get("pages", []):
-        page_index = page.get("index")
-        items: dict[str, dict[str, Any]] = {}
-        for item in page.get("items", []):
-            forge_id = item.get("forge_id")
-            text = item.get("text", "")
-            if not forge_id:
+        page_index = page.get("page_index")
+        elements: dict[str, dict[str, Any]] = {}
+        for element in page.get("elements", []):
+            element_id = element.get("element_id")
+            text = element.get("text", "")
+            if not element_id:
                 continue
-            items[forge_id] = {
+            elements[element_id] = {
                 "text": text,
                 "content_hash": _compute_hash(text),
-                "bbox": item.get("bbox") or [0.0, 0.0, 0.0, 0.0],
-                "font_size": item.get("size") or 0.0,
+                "bbox": element.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                "style": element.get("style") or {},
+                "element_type": element.get("element_type") or "text",
                 "base_text": text,
             }
+            element_lookup[element_id] = {
+                "page_index": page_index,
+                "bbox": element.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+            }
         if page_index is not None:
-            overlay[int(page_index)] = {"primitives": items, "masks": []}
-            masks_by_page[int(page_index)] = {}
+            overlay[int(page_index)] = {"primitives": elements, "masks": []}
+
+    masks_by_page: dict[int, dict[str, dict[str, Any]]] = {}
 
     for patchset in patchsets:
         for op in patchset.ops:
-            page_entry = overlay.get(op.page_index)
+            element_meta = element_lookup.get(op.element_id)
+            if not element_meta:
+                continue
+            page_index = int(element_meta["page_index"])
+            page_entry = overlay.get(page_index)
             if page_entry is None:
                 continue
             page_map = page_entry.get("primitives", {})
-            if op.forge_id not in page_map:
+            if op.element_id not in page_map:
                 continue
-            current = page_map[op.forge_id]
+            current = page_map[op.element_id]
             current["text"] = op.new_text
             current["content_hash"] = _compute_hash(op.new_text)
             base_text = current.get("base_text") or ""
             if op.new_text != base_text:
-                mask = _build_overlay_mask(current)
-                masks_by_page[op.page_index][op.forge_id] = mask
+                masks_by_page.setdefault(page_index, {})[op.element_id] = _build_overlay_mask(
+                    op.element_id,
+                    element_meta["bbox"],
+                )
 
     for page_index, masks in masks_by_page.items():
         if page_index in overlay:
             overlay[page_index]["masks"] = list(masks.values())
 
     return overlay
-
-
-def _round(value: float) -> float:
-    return round(float(value), 3)
-
-
-def _build_overlay_mask(item: dict[str, Any], padding_px: float = 2.0) -> dict[str, Any]:
-    bbox = item.get("bbox") or [0.0, 0.0, 0.0, 0.0]
-    if len(bbox) < 4:
-        bbox = [0.0, 0.0, 0.0, 0.0]
-    x0, y0, x1, y1 = [float(value) for value in bbox]
-    height = max(0.0, y1 - y0)
-    font_size = float(item.get("font_size") or 0.0)
-    extra_vertical = height * 0.1 if font_size and height > font_size * 2.5 else 0.0
-    x0 -= padding_px
-    x1 += padding_px
-    y0 -= padding_px + (extra_vertical / 2)
-    y1 += padding_px + (extra_vertical / 2)
-    return {
-        "bbox_px": [_round(x0), _round(y0), _round(x1), _round(y1)],
-        "color": "#ffffff",
-    }

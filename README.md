@@ -136,3 +136,35 @@ If AI is misconfigured or upstream errors occur, the API responds with structure
 2. Confirm the app redirects to `/editor/{docId}`.
 3. Confirm the editor loads the document metadata and decoded pages.
 4. Open the API `/health` endpoint to verify storage driver and environment settings.
+
+## Forge Editor Architecture
+
+### Document Processing Pipeline
+
+1. **Upload**: User uploads PDF/DOCX/etc.
+2. **Decode**: Universal decoder converts to structured JSON.
+   - Each page → background PNG (2x resolution)
+   - Text extracted as block-level elements (not characters)
+   - Coordinates normalized to 0-1 range
+3. **Render**: Frontend displays background + HTML overlay
+   - Overlay elements positioned with CSS absolute positioning
+   - Coordinates scaled from normalized → pixel space
+4. **Edit**: User selects element, AI proposes change
+   - AI maintains visual consistency (font size, layout)
+   - Mask generated to cover old text
+5. **Export**: PDF exported with changes burned in
+
+### Key Design Decisions
+
+- **Block-level extraction**: Avoids character-level span chaos
+- **Normalized coordinates**: Simplifies scaling across display sizes
+- **White masking**: Covers old text in background PNG
+- **Layout-aware AI**: Preserves document design during edits
+
+### Coordinate Systems
+
+- **PDF**: Points (72 per inch), origin bottom-left
+- **Normalized**: 0-1 range, origin top-left
+- **Display**: Pixels, origin top-left, scaled to container
+
+Conversion: `pixel = normalized * container_size`

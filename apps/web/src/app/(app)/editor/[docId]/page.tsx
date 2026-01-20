@@ -14,21 +14,21 @@ import {
   planOverlayPatch,
   type ExportMaskMode,
   type ForgeManifest,
-  type ForgeManifestItem,
+  type ForgeManifestElement,
   type ForgeOverlayEntry,
   type ForgeOverlayMask,
   type ForgeOverlayPlanResponse,
   type ForgeOverlaySelection
 } from "@/lib/api";
-import { computeOverlayScale } from "@/lib/overlay";
-import { OverlayLayerStack } from "@/components/editor/OverlayLayerStack";
 
 type SelectedOverlay = {
   page_index: number;
-  forge_id: string;
+  element_id: string;
   text: string;
   bbox: number[];
   content_hash: string;
+  element_type: ForgeManifestElement["element_type"];
+  style: ForgeManifestElement["style"];
 };
 
 type OverlayPageState = {
@@ -38,8 +38,37 @@ type OverlayPageState = {
   pageImageHeightPx?: number;
 };
 
+type ImageDimensions = {
+  width: number;
+  height: number;
+};
+
 const EMPTY_OVERLAY: Record<number, OverlayPageState> = {};
 const DEBUG_OVERLAY_LIMIT = 60;
+
+const getFontFamily = (pdfFont: string) => {
+  const lower = pdfFont.toLowerCase();
+  if (lower.includes("times") || lower.includes("serif")) {
+    return '"Times New Roman", Times, serif';
+  }
+  if (lower.includes("courier") || lower.includes("mono")) {
+    return '"Courier New", Courier, monospace';
+  }
+  return "Helvetica, Arial, -apple-system, BlinkMacSystemFont, sans-serif";
+};
+
+const measureTextWidth = (text: string, fontSize: number, fontFamily: string): number => {
+  if (typeof document === "undefined") {
+    return text.length * fontSize * 0.6;
+  }
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return text.length * fontSize * 0.6;
+  }
+  context.font = `${fontSize}px ${fontFamily}`;
+  return context.measureText(text).width;
+};
 
 export default function EditorPage() {
   const params = useParams<{ docId: string }>();
@@ -104,9 +133,9 @@ export default function EditorPage() {
       try {
         const overlays = await Promise.all(
           manifest.pages.map(async (page) => {
-            const response = await getForgeOverlay(docId, page.index);
+            const response = await getForgeOverlay(docId, page.page_index);
             return {
-              pageIndex: page.index,
+              pageIndex: page.page_index,
               overlay: response.overlay,
               masks: response.masks,
               pageImageWidthPx: response.page_image_width_px,
@@ -121,7 +150,7 @@ export default function EditorPage() {
         overlays.forEach(({ pageIndex, overlay, masks, pageImageWidthPx, pageImageHeightPx }) => {
           nextOverlay[pageIndex] = {
             entries: overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
-              acc[entry.forge_id] = entry;
+              acc[entry.element_id] = entry;
               return acc;
             }, {}),
             masks,
@@ -171,14 +200,16 @@ export default function EditorPage() {
     window.open(exportPdfUrl(docId, maskMode), "_blank", "noopener,noreferrer");
   };
 
-  const handleSelect = (pageIndex: number, item: ForgeManifestItem, overlayEntry?: ForgeOverlayEntry) => {
+  const handleSelect = (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => {
     setActivePage(pageIndex + 1);
     setSelectedOverlay({
       page_index: pageIndex,
-      forge_id: item.forge_id,
+      element_id: item.element_id,
       text: overlayEntry?.text ?? item.text,
       bbox: item.bbox,
-      content_hash: overlayEntry?.content_hash ?? item.content_hash
+      content_hash: overlayEntry?.content_hash ?? "",
+      element_type: item.element_type,
+      style: item.style
     });
     setPlan(null);
     setPlanError(null);
@@ -188,10 +219,12 @@ export default function EditorPage() {
   const selectionSnapshot: ForgeOverlaySelection[] | null = selectedOverlay
     ? [
         {
-          forge_id: selectedOverlay.forge_id,
+          element_id: selectedOverlay.element_id,
           text: selectedOverlay.text,
           content_hash: selectedOverlay.content_hash,
-          bbox: selectedOverlay.bbox
+          bbox: selectedOverlay.bbox,
+          element_type: selectedOverlay.element_type,
+          style: selectedOverlay.style
         }
       ]
     : null;
@@ -240,7 +273,7 @@ export default function EditorPage() {
         ...prev,
         [selectedOverlay.page_index]: {
           entries: response.overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
-            acc[entry.forge_id] = entry;
+            acc[entry.element_id] = entry;
             return acc;
           }, {}),
           masks: response.masks,
@@ -248,7 +281,7 @@ export default function EditorPage() {
           pageImageHeightPx: prev[selectedOverlay.page_index]?.pageImageHeightPx
         }
       }));
-      const updatedEntry = response.overlay.find((entry) => entry.forge_id === selectedOverlay.forge_id);
+      const updatedEntry = response.overlay.find((entry) => entry.element_id === selectedOverlay.element_id);
       if (updatedEntry) {
         setSelectedOverlay((current) =>
           current
@@ -289,7 +322,7 @@ export default function EditorPage() {
             <div className="h-full overflow-y-auto rounded-2xl border border-forge-border bg-forge-panel/60 p-3">
               <div className="flex flex-col gap-4">
                 {manifest.pages.map((page) => {
-                  const pageNumber = page.index + 1;
+                  const pageNumber = page.page_index + 1;
                   const isActive = activePage === pageNumber;
                   return (
                     <button
@@ -344,9 +377,13 @@ export default function EditorPage() {
               <div className="text-sm text-slate-400">Loading document…</div>
             ) : (
               manifest.pages.map((page) => {
-                const overlayState = overlayByPage[page.index];
+                const overlayState = overlayByPage[page.page_index];
                 return (
-                  <div key={`page_${page.index}`} id={`page-${page.index + 1}`} className="mb-6 flex justify-center">
+                  <div
+                    key={`page_${page.page_index}`}
+                    id={`page-${page.page_index + 1}`}
+                    className="mb-6 flex justify-center"
+                  >
                     <OverlayPageCanvas
                       page={page}
                       overlayState={overlayState}
@@ -367,7 +404,7 @@ export default function EditorPage() {
             {selectedOverlay ? (
               <div className="mt-3 space-y-2 text-xs text-slate-300">
                 <p>
-                  <span className="text-slate-400">Forge ID:</span> {selectedOverlay.forge_id}
+                  <span className="text-slate-400">Element ID:</span> {selectedOverlay.element_id}
                 </p>
                 <p>
                   <span className="text-slate-400">Page:</span> {selectedOverlay.page_index + 1}
@@ -417,8 +454,8 @@ export default function EditorPage() {
                 <p className="text-[11px] text-slate-400">Proposed changes</p>
                 <ul className="mt-2 space-y-1">
                   {plan.ops.map((op) => (
-                    <li key={`${op.type}-${op.forge_id}`}>
-                      <span className="text-slate-400">{op.forge_id.slice(0, 6)}:</span> {op.new_text}
+                    <li key={`${op.type}-${op.element_id}`}>
+                      <span className="text-slate-400">{op.element_id.slice(0, 6)}:</span> {op.new_text}
                     </li>
                   ))}
                 </ul>
@@ -482,13 +519,6 @@ export default function EditorPage() {
 
 type ForgeManifestPage = ForgeManifest["pages"][number];
 
-type ImageDimensions = {
-  naturalWidth: number;
-  naturalHeight: number;
-  clientWidth: number;
-  clientHeight: number;
-};
-
 function OverlayPageCanvas({
   page,
   overlayState,
@@ -500,84 +530,144 @@ function OverlayPageCanvas({
   overlayState?: OverlayPageState;
   selectedOverlay: SelectedOverlay | null;
   showDebugOverlay: boolean;
-  onSelect: (pageIndex: number, item: ForgeManifestItem, overlayEntry?: ForgeOverlayEntry) => void;
+  onSelect: (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => void;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
-  const [dimensions, setDimensions] = useState<ImageDimensions>({
-    naturalWidth: 0,
-    naturalHeight: 0,
-    clientWidth: 0,
-    clientHeight: 0
-  });
+  const [containerSize, setContainerSize] = useState<ImageDimensions>({ width: 0, height: 0 });
+  const [imageLoaded, setImageLoaded] = useState(false);
 
   useEffect(() => {
     const img = imgRef.current;
     if (!img) {
       return;
     }
-    const updateClient = () => {
-      setDimensions((prev) => ({
-        ...prev,
-        clientWidth: img.clientWidth,
-        clientHeight: img.clientHeight
-      }));
+
+    const updateSize = () => {
+      setContainerSize({
+        width: img.clientWidth,
+        height: img.clientHeight
+      });
     };
-    const observer = new ResizeObserver(() => updateClient());
+
+    const observer = new ResizeObserver(updateSize);
     observer.observe(img);
-    updateClient();
-    return () => observer.disconnect();
+    img.addEventListener("load", updateSize);
+
+    return () => {
+      observer.disconnect();
+      img.removeEventListener("load", updateSize);
+    };
   }, []);
 
-  const handleImageLoad = () => {
-    const img = imgRef.current;
-    if (!img) {
-      return;
-    }
-    setDimensions((prev) => ({
-      ...prev,
-      naturalWidth: img.naturalWidth,
-      naturalHeight: img.naturalHeight,
-      clientWidth: img.clientWidth,
-      clientHeight: img.clientHeight
-    }));
-  };
-
-  const { scaleX, scaleY } = computeOverlayScale(dimensions);
-  const overlayMap = overlayState?.entries ?? {};
-  const masks = overlayState?.masks ?? [];
-  const hasImageSize = dimensions.naturalWidth > 0 && dimensions.clientWidth > 0;
-
   return (
-    <div className="relative inline-block max-w-full shadow-xl">
+    <div className="relative inline-block max-w-full shadow-xl" data-page-index={page.page_index}>
       <img
         ref={imgRef}
         src={apiUrl(page.image_path)}
-        alt={`Page ${page.index + 1}`}
+        alt={`Page ${page.page_index + 1}`}
         className="block h-auto max-w-full"
-        onLoad={handleImageLoad}
+        onLoad={() => setImageLoaded(true)}
       />
-      {hasImageSize ? (
-        <div className="absolute inset-0">
-          <div
-            className="relative"
-            style={{
-              width: dimensions.naturalWidth,
-              height: dimensions.naturalHeight,
-              transform: `scale(${scaleX}, ${scaleY})`,
-              transformOrigin: "top left"
-            }}
-          >
-            <OverlayLayerStack
-              pageIndex={page.index}
-              items={page.items}
-              overlayMap={overlayMap}
-              masks={masks}
-              selectedForgeId={selectedOverlay?.forge_id}
-              showDebugOverlay={showDebugOverlay}
-              debugLimit={DEBUG_OVERLAY_LIMIT}
-              onSelect={onSelect}
-            />
-          </div>
+
+      {imageLoaded && containerSize.width > 0 ? (
+        <div className="absolute inset-0 pointer-events-none">
+          {overlayState?.masks?.map((mask, idx) => {
+            const x = mask.bbox[0] * containerSize.width;
+            const y = mask.bbox[1] * containerSize.height;
+            const w = (mask.bbox[2] - mask.bbox[0]) * containerSize.width;
+            const h = (mask.bbox[3] - mask.bbox[1]) * containerSize.height;
+
+            return (
+              <div
+                key={`mask_${idx}`}
+                style={{
+                  position: "absolute",
+                  left: x,
+                  top: y,
+                  width: w,
+                  height: h,
+                  backgroundColor: mask.color
+                }}
+              />
+            );
+          })}
+
+          {page.elements.map((element) => {
+            const overlayEntry = overlayState?.entries?.[element.element_id];
+            const displayText = overlayEntry?.text ?? element.text;
+            const isSelected = selectedOverlay?.element_id === element.element_id;
+
+            const x = element.bbox[0] * containerSize.width;
+            const y = element.bbox[1] * containerSize.height;
+            const w = (element.bbox[2] - element.bbox[0]) * containerSize.width;
+            const h = (element.bbox[3] - element.bbox[1]) * containerSize.height;
+
+            const fontFamily = getFontFamily(element.style.font_family || "");
+            let fontSize = (element.style.font_size_pt / page.width_pt) * containerSize.width;
+            const textWidth = measureTextWidth(displayText, fontSize, fontFamily);
+            if (textWidth > w * 1.1) {
+              const scaleFactor = w / textWidth;
+              fontSize = fontSize * scaleFactor * 0.95;
+            }
+
+            return (
+              <div
+                key={element.element_id}
+                onClick={() => onSelect(page.page_index, element, overlayEntry)}
+                className={`absolute cursor-pointer pointer-events-auto transition-all duration-150 ${
+                  isSelected
+                    ? "ring-2 ring-blue-500 bg-blue-500/10 z-20"
+                    : "hover:ring-1 hover:ring-blue-300/50 hover:bg-blue-300/5"
+                }`}
+                style={{
+                  left: x,
+                  top: y,
+                  width: w,
+                  height: h,
+                  color: element.style.color,
+                  fontSize,
+                  fontWeight: element.style.is_bold ? "bold" : "normal",
+                  fontFamily,
+                  lineHeight: element.element_type === "text" ? 1.4 : 1.2,
+                  whiteSpace: element.element_type === "text" ? "pre-wrap" : "pre-wrap",
+                  overflow: "visible",
+                  padding: "2px",
+                  display: "flex",
+                  alignItems: "flex-start"
+                }}
+              >
+                {displayText}
+              </div>
+            );
+          })}
+
+          {showDebugOverlay
+            ? page.elements.slice(0, DEBUG_OVERLAY_LIMIT).map((element) => {
+                const x = element.bbox[0] * containerSize.width;
+                const y = element.bbox[1] * containerSize.height;
+                const w = (element.bbox[2] - element.bbox[0]) * containerSize.width;
+                const h = (element.bbox[3] - element.bbox[1]) * containerSize.height;
+
+                return (
+                  <div
+                    key={`debug_${element.element_id}`}
+                    style={{
+                      position: "absolute",
+                      left: x,
+                      top: y,
+                      width: w,
+                      height: h,
+                      border: "1px solid yellow",
+                      pointerEvents: "none"
+                    }}
+                  >
+                    <span className="text-xs bg-yellow-500/50 px-1">
+                      {element.element_id}
+                    </span>
+                  </div>
+                );
+              })
+            : null}
         </div>
       ) : null}
     </div>

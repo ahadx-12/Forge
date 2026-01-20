@@ -1,10 +1,11 @@
+import Link from "next/link";
 import { FileText, Grid2x2, LayoutPanelLeft, Settings } from "lucide-react";
 
 const navItems = [
-  { icon: Grid2x2, label: "Dashboard" },
-  { icon: FileText, label: "Documents" },
-  { icon: LayoutPanelLeft, label: "Editor" },
-  { icon: Settings, label: "Settings" }
+  { icon: Grid2x2, label: "Dashboard", href: "/dashboard" },
+  { icon: FileText, label: "Documents", href: "/documents" },
+  { icon: LayoutPanelLeft, label: "Editor", href: "/editor" },
+  { icon: Settings, label: "Settings", href: "/settings" }
 ];
 
 export function SideBar() {
@@ -16,13 +17,14 @@ export function SideBar() {
       </div>
       <nav className="flex flex-col gap-2">
         {navItems.map((item) => (
-          <button
+          <Link
             key={item.label}
+            href={item.href}
             className="flex items-center gap-3 rounded-xl border border-transparent bg-forge-card/40 px-4 py-3 text-left text-sm text-slate-200 transition hover:border-forge-border hover:bg-forge-card/70"
           >
             <item.icon className="h-4 w-4" />
             {item.label}
-          </button>
+          </Link>
         ))}
       </nav>
       <div className="mt-auto rounded-2xl border border-forge-border bg-gradient-to-br from-forge-card/70 to-forge-panel/80 p-4 text-sm text-slate-200">
