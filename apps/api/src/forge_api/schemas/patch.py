@@ -198,8 +198,15 @@ class OverlayEntry(BaseModel):
     forge_id: str
     text: str
     content_hash: str
+    bbox_px: list[float]
+
+
+class OverlayMask(BaseModel):
+    bbox_px: list[float]
+    color: str
 
 
 class OverlayPatchCommitResponse(BaseModel):
     patchset: OverlayPatchRecord
     overlay: list[OverlayEntry]
+    masks: list[OverlayMask]

@@ -31,15 +31,52 @@ def _normalize_bbox(bbox: list[float]) -> list[float]:
     return [_round(bbox[0]), _round(bbox[1]), _round(bbox[2]), _round(bbox[3])]
 
 
-def _bbox_pt_to_px(bbox_pt: list[float], scale: float, page_height_pt: float) -> list[float]:
+def _rotated_dimensions(width_pt: float, height_pt: float, rotation: int) -> tuple[float, float]:
+    normalized = rotation % 360
+    if normalized in (90, 270):
+        return height_pt, width_pt
+    return width_pt, height_pt
+
+
+def _rotate_point(x: float, y: float, width_pt: float, height_pt: float, rotation: int) -> tuple[float, float]:
+    normalized = rotation % 360
+    if normalized == 90:
+        return y, width_pt - x
+    if normalized == 180:
+        return width_pt - x, height_pt - y
+    if normalized == 270:
+        return height_pt - y, x
+    return x, y
+
+
+def _bbox_pt_to_px(
+    bbox_pt: list[float],
+    scale_x: float,
+    scale_y: float,
+    page_width_pt: float,
+    page_height_pt: float,
+    rotation: int = 0,
+) -> list[float]:
     """Convert PDF point bbox (bottom-left origin) into PNG pixel bbox (top-left origin)."""
     if len(bbox_pt) < 4:
         return [0.0, 0.0, 0.0, 0.0]
     x0_pt, y0_pt, x1_pt, y1_pt = bbox_pt
-    x0_px = x0_pt * scale
-    x1_px = x1_pt * scale
-    y0_px = (page_height_pt - y1_pt) * scale
-    y1_px = (page_height_pt - y0_pt) * scale
+    corners = [
+        (x0_pt, y0_pt),
+        (x1_pt, y0_pt),
+        (x1_pt, y1_pt),
+        (x0_pt, y1_pt),
+    ]
+    rotated = [_rotate_point(x, y, page_width_pt, page_height_pt, rotation) for x, y in corners]
+    rotated_x = [point[0] for point in rotated]
+    rotated_y = [point[1] for point in rotated]
+    x0_rot, x1_rot = min(rotated_x), max(rotated_x)
+    y0_rot, y1_rot = min(rotated_y), max(rotated_y)
+    rotated_width_pt, rotated_height_pt = _rotated_dimensions(page_width_pt, page_height_pt, rotation)
+    x0_px = x0_rot * scale_x
+    x1_px = x1_rot * scale_x
+    y0_px = (rotated_height_pt - y1_rot) * scale_y
+    y1_px = (rotated_height_pt - y0_rot) * scale_y
     return [_round(x0_px), _round(y0_px), _round(x1_px), _round(y1_px)]
 
 
@@ -118,11 +155,13 @@ def build_forge_manifest(doc_id: str) -> dict[str, Any]:
     pdf_bytes = storage.get_bytes(pdf_key)
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages: list[dict[str, Any]] = []
+    debug_logged = False
     try:
         for page_index in range(len(doc)):
             page = doc[page_index]
             pix = page.get_pixmap(alpha=False)
-            scale = pix.width / page.rect.width if page.rect.width else 1.0
+            scale_x = pix.width / page.rect.width if page.rect.width else 1.0
+            scale_y = pix.height / page.rect.height if page.rect.height else 1.0
             storage.put_bytes(
                 _page_png_key(doc_id, page_index),
                 pix.tobytes("png"),
@@ -165,7 +204,14 @@ def build_forge_manifest(doc_id: str) -> dict[str, Any]:
                 forge_id = f"p{page_index}_t{idx}"
                 content_hash = _compute_hash(span["text"])
                 bbox_pt = span["bbox"]
-                bbox_px = _bbox_pt_to_px(bbox_pt, scale, page.rect.height)
+                bbox_px = _bbox_pt_to_px(
+                    bbox_pt,
+                    scale_x,
+                    scale_y,
+                    page.rect.width,
+                    page.rect.height,
+                    page.rotation,
+                )
                 items.append(
                     {
                         "forge_id": forge_id,
@@ -175,12 +221,36 @@ def build_forge_manifest(doc_id: str) -> dict[str, Any]:
                         # bbox_pt is in PDF points with a bottom-left origin (for export).
                         "bbox_pt": bbox_pt,
                         "font": span["font"],
-                        "size": _round(span["size"] * scale),
+                        "size": _round(span["size"] * scale_x),
                         "size_pt": span["size"],
                         "color": span["color"],
                         "content_hash": content_hash,
                     }
                 )
+
+            if items and not debug_logged:
+                first_item = items[0]
+                logger.info(
+                    "forge manifest overlay debug doc_id=%s pdf_box={w_pt:%s,h_pt:%s,rotation:%s,box_type:%s} "
+                    "png={w_px:%s,h_px:%s} primitive_before={forge_id:%s,bbox_pdf:%s,text:%s} "
+                    "primitive_after={forge_id:%s,bbox_px:%s,text:%s} expected_scale={scale_x:%s,scale_y:%s}",
+                    doc_id,
+                    _round(page.rect.width),
+                    _round(page.rect.height),
+                    page.rotation,
+                    "cropbox",
+                    pix.width,
+                    pix.height,
+                    first_item["forge_id"],
+                    first_item["bbox_pt"],
+                    first_item["text"],
+                    first_item["forge_id"],
+                    first_item["bbox"],
+                    first_item["text"],
+                    _round(scale_x),
+                    _round(scale_y),
+                )
+                debug_logged = True
 
             pages.append(
                 {
@@ -189,7 +259,7 @@ def build_forge_manifest(doc_id: str) -> dict[str, Any]:
                     "height_pt": _round(page.rect.height),
                     "width_px": pix.width,
                     "height_px": pix.height,
-                    "scale": _round(scale),
+                    "scale": _round(scale_x),
                     "rotation": page.rotation,
                     "image_path": f"/v1/documents/{doc_id}/forge/pages/{page_index}.png",
                     "items": items,
