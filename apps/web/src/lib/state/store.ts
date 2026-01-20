@@ -5,7 +5,9 @@ import type {
   IRPage,
   PatchOp,
   PatchsetRecord,
-  PatchsetInput
+  PatchsetInput,
+  SelectionFingerprint,
+  SelectionSnapshot
 } from "@/lib/api";
 import { commitPatch, getCompositeIR, getIR, getPatches, planPatch, revertLastPatch } from "@/lib/api";
 
@@ -26,6 +28,7 @@ interface SelectionState {
     rationale_short: string;
     page_index: number;
   } | null;
+  pendingSelection: SelectionSnapshot | null;
   patchVisibility: PatchVisibility;
   setIRPage: (pageIndex: number, page: IRPage) => void;
   setBasePage: (pageIndex: number, page: IRPage) => void;
@@ -64,6 +67,10 @@ const applyPatchsets = (
         if (!target) {
           return;
         }
+        const result = resultsById.get(op.target_id);
+        if (result && result.ok === false) {
+          return;
+        }
         if (op.op === "set_style" && target.kind === "path") {
           if (op.stroke_color !== undefined) {
             target.style.stroke_color = op.stroke_color;
@@ -80,7 +87,6 @@ const applyPatchsets = (
         }
         if (op.op === "replace_text" && target.kind === "text") {
           target.text = op.new_text;
-          const result = resultsById.get(op.target_id);
           if (result?.applied_font_size_pt) {
             target.style.size = result.applied_font_size_pt;
           }
@@ -96,6 +102,49 @@ const applyPatchsets = (
   return composite;
 };
 
+const computeContentHash = async (text?: string | null): Promise<string> => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text ?? "");
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+};
+
+const buildSelectionSnapshot = async (primitive: IRPage["primitives"][number], pageIndex: number): Promise<SelectionSnapshot> => {
+  const style = primitive.style as Record<string, unknown>;
+  const fontName = typeof style.font === "string" ? style.font : null;
+  const fontSize = typeof style.size === "number" ? style.size : null;
+  return {
+    element_id: primitive.id,
+    page_index: pageIndex,
+    bbox: primitive.bbox,
+    text: primitive.kind === "text" ? primitive.text ?? null : null,
+    font_name: fontName,
+    font_size: fontSize,
+    parent_id: null,
+    content_hash: await computeContentHash(primitive.kind === "text" ? primitive.text ?? "" : "")
+  };
+};
+
+const buildSelectionFingerprints = async (
+  selections: SelectionSnapshot[]
+): Promise<SelectionFingerprint[]> => {
+  const fingerprints: SelectionFingerprint[] = [];
+  for (const selection of selections) {
+    const hash =
+      selection.content_hash ?? (await computeContentHash(selection.text ?? ""));
+    fingerprints.push({
+      element_id: selection.element_id,
+      page_index: selection.page_index,
+      content_hash: hash,
+      bbox: selection.bbox,
+      parent_id: selection.parent_id ?? null
+    });
+  }
+  return fingerprints;
+};
+
 export const useSelectionStore = create<SelectionState>((set, get) => ({
   irPages: {},
   basePages: {},
@@ -107,6 +156,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
   patchsets: [],
   pendingProposal: null,
   patchVisibility: {},
+  pendingSelection: null,
   setIRPage: (pageIndex, page) =>
     set((state) => ({
       irPages: {
@@ -189,10 +239,12 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     if (!selectedPrimitive) {
       throw new Error("Selected primitive not found");
     }
+    const selection = await buildSelectionSnapshot(selectedPrimitive, activePageIndex);
     const response = await planPatch({
       doc_id: docId,
       page_index: activePageIndex,
       selected_ids: [selectedId],
+      selection,
       selected_primitives: [
         {
           id: selectedPrimitive.id,
@@ -204,26 +256,37 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
       ],
       user_instruction: instruction
     });
-    set({ pendingProposal: response.proposed_patchset });
+    set({ pendingProposal: response.proposed_patchset, pendingSelection: selection });
   },
-  clearProposal: () => set({ pendingProposal: null }),
+  clearProposal: () => set({ pendingProposal: null, pendingSelection: null }),
   applyProposal: async (docId) => {
-    const { pendingProposal } = get();
-    if (!pendingProposal) {
+    const { pendingProposal, pendingSelection } = get();
+    if (!pendingProposal || !pendingSelection) {
       return;
     }
+    const allowedTargets = await buildSelectionFingerprints([pendingSelection]);
     await commitPatch(docId, {
       ops: pendingProposal.ops,
       page_index: pendingProposal.page_index,
       selected_ids: pendingProposal.ops.map((op) => op.target_id),
       rationale_short: pendingProposal.rationale_short
-    });
-    set({ pendingProposal: null });
+    }, allowedTargets);
+    set({ pendingProposal: null, pendingSelection: null });
     await get().loadPatchsets(docId);
     await get().previewComposite(docId, pendingProposal.page_index);
   },
   commitManualPatch: async (docId, patchset) => {
-    await commitPatch(docId, patchset);
+    const { selectedId, activePageIndex, basePages } = get();
+    let allowedTargets: SelectionFingerprint[] | undefined;
+    if (selectedId && activePageIndex !== null) {
+      const basePage = basePages[activePageIndex];
+      const selectedPrimitive = basePage?.primitives.find((primitive) => primitive.id === selectedId) ?? null;
+      if (selectedPrimitive) {
+        const selection = await buildSelectionSnapshot(selectedPrimitive, activePageIndex);
+        allowedTargets = await buildSelectionFingerprints([selection]);
+      }
+    }
+    await commitPatch(docId, patchset, allowedTargets);
     await get().loadPatchsets(docId);
     await get().previewComposite(docId, patchset.page_index);
   },

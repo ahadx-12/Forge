@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from forge_api.core.patch.selection import compute_content_hash
 from forge_api.schemas.ir import IRPage
 from forge_api.services.ir_pdf import _cache_key, _serialize_ir_page
 from forge_api.services.storage import get_storage
@@ -28,6 +29,15 @@ def test_commit_replace_text_with_font_fallback(client, upload_pdf):
         "/v1/patch/commit",
         json={
             "doc_id": doc_id,
+            "allowed_targets": [
+                {
+                    "element_id": text_item["id"],
+                    "page_index": 0,
+                    "content_hash": compute_content_hash(text_item.get("text")),
+                    "bbox": text_item["bbox"],
+                    "parent_id": None,
+                }
+            ],
             "patchset": {
                 "ops": [
                     {
@@ -43,3 +53,6 @@ def test_commit_replace_text_with_font_fallback(client, upload_pdf):
         },
     )
     assert commit_response.status_code == 200
+    payload = commit_response.json()
+    result = next(item for item in payload["patchset"]["results"] if item["target_id"] == text_item["id"])
+    assert any(warning["code"] == "font_fallback" for warning in result.get("warnings", []))

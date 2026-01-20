@@ -39,6 +39,12 @@ def _page_to_schema(page_ir) -> IRPage:
                 "stroke_width": primitive.style.stroke_width,
             }
         )
+        font_ref = None
+        if primitive.kind == "text":
+            font_ref = {
+                "pdf_font_name": primitive.style.font,
+                "embedded": False,
+            }
         primitives.append(
             IRPrimitive(
                 id=primitive.id,
@@ -48,6 +54,7 @@ def _page_to_schema(page_ir) -> IRPage:
                 style=style,
                 signature_fields=primitive.signature_fields,
                 text=getattr(primitive, "text", None),
+                font_ref=font_ref,
             )
         )
 

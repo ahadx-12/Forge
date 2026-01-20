@@ -7,24 +7,26 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from forge_api.core.errors import AIError
+from forge_api.core.patch.selection import compute_content_hash
 from forge_api.schemas.patch import PatchOp, PatchPlanRequest, PatchProposal
 from forge_api.services.openai_client import OpenAIClient
 
 
 SYSTEM_PROMPT = """You are a patch planner for Forge. Output JSON only.
 Rules:
-- Only refer to IDs in selected_ids. Do not use candidates or any other IDs.
+- Only target selection.element_id. Do not use any other IDs.
 - Never invent new IDs or geometry.
 - Only output ops with op=\"set_style\" or op=\"replace_text\".
 - For set_style, you may set stroke_color, stroke_width_pt, fill_color, opacity.
-- For replace_text, you must include new_text and policy (FIT_IN_BOX or OVERFLOW_NOTICE).
+- For replace_text, you must include new_text, policy (FIT_IN_BOX or OVERFLOW_NOTICE),
+  and old_text exactly as provided in selection.text.
 - Output must be strict JSON of the form: {\"ops\":[...],\"rationale_short\":\"...\"}.
 """
 
 
 STRICT_RETRY_PROMPT = """Your previous output was invalid. Output ONLY valid JSON.
 Do not include markdown, comments, or extra keys.
-Ensure all IDs come from allowed lists.
+Ensure the ID is selection.element_id and old_text matches selection.text.
 """
 
 
@@ -39,14 +41,37 @@ def _extract_json(text: str) -> str:
     return text[start : end + 1]
 
 
-def _validate_ops(payload: dict[str, Any], allowed_ids: set[str], page_index: int) -> PatchProposal:
+def _validate_ops(payload: dict[str, Any], selection_id: str, selection_text: str | None, page_index: int) -> PatchProposal:
     if "ops" not in payload or "rationale_short" not in payload:
         raise ValueError("Missing keys")
     adapter = TypeAdapter(PatchOp)
     ops = [adapter.validate_python(item) for item in payload["ops"]]
     for op in ops:
-        if op.target_id not in allowed_ids:
-            raise ValueError("Invalid target id")
+        if op.target_id != selection_id:
+            raise AIError(
+                status_code=400,
+                code="AI_OUT_OF_SCOPE",
+                message="AI proposed an out-of-scope patch",
+                details={"target_id": op.target_id, "selection_id": selection_id},
+            )
+        if op.op == "replace_text":
+            if selection_text is None:
+                raise AIError(
+                    status_code=400,
+                    code="AI_OUT_OF_SCOPE",
+                    message="AI proposed text replacement for non-text selection",
+                    details={"selection_id": selection_id},
+                )
+            if op.old_text is None or op.old_text != selection_text:
+                raise AIError(
+                    status_code=400,
+                    code="AI_OUT_OF_SCOPE",
+                    message="AI old_text mismatch",
+                    details={
+                        "selection_id": selection_id,
+                        "content_hash": compute_content_hash(selection_text),
+                    },
+                )
     return PatchProposal(
         patchset_id=str(uuid4()),
         ops=ops,
@@ -56,13 +81,22 @@ def _validate_ops(payload: dict[str, Any], allowed_ids: set[str], page_index: in
 
 
 def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> PatchProposal:
-    allowed_ids = set(request.selected_ids)
-    if not allowed_ids:
+    if request.selection is None:
         raise AIError(
             status_code=400,
-            code="missing_selection",
-            message="Selection or candidates are required for AI patch planning",
+            code="MISSING_SELECTION",
+            message="Selection is required for AI patch planning",
             details={"doc_id": request.doc_id, "page_index": request.page_index},
+        )
+
+    selection_id = request.selection.element_id
+    selection_text = request.selection.text
+    if request.selected_ids is not None and selection_id not in request.selected_ids:
+        raise AIError(
+            status_code=400,
+            code="AI_OUT_OF_SCOPE",
+            message="Selection does not match allowed targets",
+            details={"selection_id": selection_id, "selected_ids": request.selected_ids},
         )
 
     if request.selected_primitives:
@@ -77,16 +111,15 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
                 "style": primitive.get("style"),
             }
             for primitive in primitives
-            if primitive["id"] in allowed_ids
+            if primitive["id"] == selection_id
         ]
 
     prompt = {
         "doc_id": request.doc_id,
         "page_index": request.page_index,
-        "selected_ids": request.selected_ids,
-        "candidates": request.candidates or [],
         "instruction": request.user_instruction,
-        "primitives": selection_context,
+        "selection": request.selection.model_dump(),
+        "selection_context": selection_context,
     }
 
     client = OpenAIClient()
@@ -97,7 +130,9 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
 
     try:
         payload = json.loads(_extract_json(response_text))
-        return _validate_ops(payload, allowed_ids, request.page_index)
+        return _validate_ops(payload, selection_id, selection_text, request.page_index)
+    except AIError:
+        raise
     except Exception as exc:
         retry_text = client.response_json(
             system=SYSTEM_PROMPT + "\n" + STRICT_RETRY_PROMPT,
@@ -105,7 +140,9 @@ def plan_patch(request: PatchPlanRequest, primitives: list[dict[str, Any]]) -> P
         )
         try:
             payload = json.loads(_extract_json(retry_text))
-            return _validate_ops(payload, allowed_ids, request.page_index)
+            return _validate_ops(payload, selection_id, selection_text, request.page_index)
+        except AIError:
+            raise
         except Exception as retry_exc:
             raise AIError(
                 status_code=400,

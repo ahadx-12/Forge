@@ -6,6 +6,25 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class SelectionFingerprint(BaseModel):
+    element_id: str
+    page_index: int
+    content_hash: str
+    bbox: list[float]
+    parent_id: str | None = None
+
+
+class SelectionSnapshot(BaseModel):
+    element_id: str
+    page_index: int
+    bbox: list[float]
+    text: str | None = None
+    font_name: str | None = None
+    font_size: float | None = None
+    parent_id: str | None = None
+    content_hash: str | None = None
+
+
 class PatchOpBase(BaseModel):
     op: str
     target_id: str
@@ -38,6 +57,7 @@ class PatchReplaceText(PatchOpBase):
     op: Literal["replace_text"]
     new_text: str
     policy: Literal["FIT_IN_BOX", "OVERFLOW_NOTICE"]
+    old_text: str | None = None
 
 
 PatchOp = PatchSetStyle | PatchReplaceText
@@ -58,9 +78,15 @@ class PatchDiffEntry(BaseModel):
 
 class PatchOpResult(BaseModel):
     target_id: str
+    ok: bool = True
+    code: str | None = None
+    details: dict[str, object] | None = None
     applied_font_size_pt: float | None = None
     overflow: bool | None = None
     did_not_fit: bool | None = None
+    font_adjusted: bool | None = None
+    bbox_adjusted: bool | None = None
+    warnings: list[dict[str, object]] = Field(default_factory=list)
 
 
 class PatchsetRecord(BaseModel):
@@ -83,20 +109,25 @@ class PatchsetListResponse(BaseModel):
 class PatchCommitRequest(BaseModel):
     doc_id: str
     patchset: PatchsetInput
+    allowed_targets: list[SelectionFingerprint] | None = None
+    base_ir_version: str | None = None
 
 
 class PatchCommitResponse(BaseModel):
     patchset: PatchsetRecord
     patch_log: list[PatchsetRecord]
+    applied_ops: list[PatchOpResult] | None = None
+    rejected_ops: list[PatchOpResult] | None = None
 
 
 class PatchPlanRequest(BaseModel):
     doc_id: str
     page_index: int
-    selected_ids: list[str]
+    selected_ids: list[str] | None = None
     user_instruction: str
     candidates: list[str] | None = None
     selected_primitives: list[dict[str, object]] | None = None
+    selection: SelectionSnapshot | None = None
 
 
 class PatchProposal(BaseModel):

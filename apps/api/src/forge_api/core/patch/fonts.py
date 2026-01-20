@@ -4,46 +4,18 @@ import logging
 
 import fitz
 
+from forge_api.core.fonts.resolve import resolve_builtin_font
+
 
 logger = logging.getLogger("forge_api")
 
 DEFAULT_FONT = "helv"
-BASE_FONT_MAP = {
-    "calibri": "helv",
-    "arial": "helv",
-    "arialmt": "helv",
-    "helvetica": "helv",
-    "times": "times",
-    "timesnewroman": "times",
-    "timesnewromanpsmt": "times",
-    "courier": "cour",
-}
 
 
 def normalize_font_name(font_name: str | None) -> str | None:
-    if not font_name:
+    if font_name is None:
         return None
-    cleaned = font_name.strip().lower()
-    if not cleaned:
-        return None
-    normalized = cleaned.replace(",", "-").replace(" ", "-")
-    tokens = [token for token in normalized.split("-") if token]
-    base = tokens[0] if tokens else normalized
-
-    is_bold = any("bold" in token for token in tokens)
-    is_italic = any(token in {"italic", "oblique"} or "italic" in token for token in tokens)
-
-    base = BASE_FONT_MAP.get(base, base)
-    if base not in {"helv", "times", "cour"}:
-        base = DEFAULT_FONT
-
-    if is_bold and is_italic:
-        return f"{base}BI"
-    if is_bold:
-        return f"{base}B"
-    if is_italic:
-        return f"{base}I"
-    return base
+    return resolve_builtin_font(font_name)[0]
 
 
 def safe_get_text_length(
@@ -55,7 +27,7 @@ def safe_get_text_length(
     page_index: int | None = None,
     primitive_id: str | None = None,
 ) -> float:
-    resolved_font = normalize_font_name(font_name) or DEFAULT_FONT
+    resolved_font, _, _ = resolve_builtin_font(font_name)
     try:
         return fitz.get_text_length(text, fontname=resolved_font, fontsize=font_size)
     except (RuntimeError, ValueError) as exc:

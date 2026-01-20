@@ -14,6 +14,7 @@ class IRPrimitive(BaseModel):
     signature_fields: dict[str, Any]
     text: str | None = None
     patch_meta: dict[str, Any] | None = None
+    font_ref: dict[str, Any] | None = None
 
 
 class IRPage(BaseModel):

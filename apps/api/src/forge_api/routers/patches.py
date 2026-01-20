@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from forge_api.core.patch.apply import apply_ops_to_page
+from forge_api.core.patch.selection import bbox_within_drift, compute_content_hash
 from forge_api.core.patch.validate import validate_patch_ops
 from forge_api.core.errors import APIError, StorageError
 from forge_api.core.request_context import get_request_id
@@ -62,7 +63,74 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
     except IndexError as exc:
         raise HTTPException(status_code=404, detail="Page not found") from exc
 
-    validation = validate_patch_ops(base_page, patchset.ops, patchset.selected_ids)
+    patch_log = load_patch_log(parsed.doc_id)
+    existing_ops = [op for record in patch_log if record.page_index == patchset.page_index for op in record.ops]
+    composite_page, _ = apply_ops_to_page(base_page, existing_ops)
+
+    allowed_ids = None
+    if parsed.allowed_targets is not None:
+        if not parsed.allowed_targets:
+            raise APIError(
+                status_code=400,
+                code="missing_selection",
+                message="allowed_targets cannot be empty",
+                details={"doc_id": parsed.doc_id},
+            )
+        allowed_ids = {target.element_id for target in parsed.allowed_targets}
+        for target in parsed.allowed_targets:
+            if target.page_index != patchset.page_index:
+                raise APIError(
+                    status_code=409,
+                    code="PATCH_OUT_OF_SCOPE",
+                    message="Selection does not match page index",
+                    details={"element_id": target.element_id, "page_index": target.page_index},
+                )
+        primitives_by_id = {primitive.id: primitive for primitive in composite_page.primitives}
+        for target in parsed.allowed_targets:
+            primitive = primitives_by_id.get(target.element_id)
+            if primitive is None:
+                raise APIError(
+                    status_code=409,
+                    code="TARGET_NOT_FOUND",
+                    message="Target element no longer exists",
+                    details={"element_id": target.element_id},
+                )
+            if not bbox_within_drift(target.bbox, primitive.bbox, tolerance=5.0):
+                raise APIError(
+                    status_code=409,
+                    code="PATCH_DRIFT",
+                    message="Target element bbox drifted",
+                    details={"element_id": target.element_id},
+                )
+            if primitive.kind == "text":
+                current_hash = compute_content_hash(primitive.text)
+                if target.content_hash != current_hash:
+                    raise APIError(
+                        status_code=409,
+                        code="PATCH_CONFLICT",
+                        message="Target element content has changed",
+                        details={"element_id": target.element_id},
+                    )
+            else:
+                if target.content_hash not in {"", compute_content_hash("")}:
+                    raise APIError(
+                        status_code=409,
+                        code="PATCH_CONFLICT",
+                        message="Target element content hash mismatch",
+                        details={"element_id": target.element_id},
+                    )
+
+        for op in patchset.ops:
+            if op.target_id not in allowed_ids:
+                raise APIError(
+                    status_code=409,
+                    code="PATCH_OUT_OF_SCOPE",
+                    message="Patch targets outside selection",
+                    details={"target_id": op.target_id},
+                )
+
+    validation_ids = list(allowed_ids) if allowed_ids is not None else patchset.selected_ids
+    validation = validate_patch_ops(composite_page, patchset.ops, validation_ids)
     if not validation.ok:
         missing_targets = [error for error in validation.errors if error.startswith("Unknown target id")]
         out_of_scope = [error for error in validation.errors if error.endswith("not in selection")]
@@ -87,7 +155,7 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
             details={"errors": validation.errors},
         )
 
-    _, results = apply_ops_to_page(base_page, patchset.ops)
+    _, results = apply_ops_to_page(composite_page, patchset.ops)
     warnings = [
         f"Text did not fit for {result.target_id}"
         for result in results
@@ -99,7 +167,7 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
             patchset.ops,
             patchset.page_index,
             patchset.rationale_short,
-            patchset.selected_ids,
+            validation_ids,
             validation.diff_summary,
             results,
             warnings,
@@ -119,7 +187,14 @@ def commit_patch(payload: dict, request: Request) -> PatchCommitResponse:
             message="Storage operation failed while committing patch",
             details={"doc_id": parsed.doc_id},
         ) from exc
-    return PatchCommitResponse(patchset=record, patch_log=patch_log)
+    applied_ops = [result for result in results if result.ok]
+    rejected_ops = [result for result in results if not result.ok]
+    return PatchCommitResponse(
+        patchset=record,
+        patch_log=patch_log,
+        applied_ops=applied_ops,
+        rejected_ops=rejected_ops,
+    )
 
 
 @router.get("/patches/{doc_id}", response_model=PatchsetListResponse)
