@@ -3,6 +3,8 @@ export type DocumentMeta = {
   filename: string;
   size_bytes: number;
   created_at_iso: string;
+  has_forge_manifest?: boolean;
+  forge_manifest_url?: string | null;
 };
 
 export type DecodePageItem = {
@@ -176,6 +178,87 @@ export type PatchPlanResponse = {
 
 export type ExportMaskMode = "SOLID" | "AUTO_BG";
 
+export type ForgeManifestItem = {
+  forge_id: string;
+  text: string;
+  bbox: number[];
+  font: string;
+  size: number;
+  color: string;
+  content_hash: string;
+};
+
+export type ForgeManifestPage = {
+  index: number;
+  width_pt: number;
+  height_pt: number;
+  rotation: number;
+  image_path: string;
+  items: ForgeManifestItem[];
+};
+
+export type ForgeManifest = {
+  doc_id: string;
+  page_count: number;
+  pages: ForgeManifestPage[];
+  generated_at_iso: string;
+};
+
+export type ForgeOverlayEntry = {
+  forge_id: string;
+  text: string;
+  content_hash: string;
+};
+
+export type ForgeOverlayResponse = {
+  doc_id: string;
+  page_index: number;
+  overlay: ForgeOverlayEntry[];
+};
+
+export type ForgeOverlaySelection = {
+  forge_id: string;
+  text: string;
+  content_hash: string;
+  bbox: number[];
+};
+
+export type ForgeOverlayPatchOp = {
+  type: "replace_overlay_text";
+  page_index: number;
+  forge_id: string;
+  old_hash: string;
+  new_text: string;
+};
+
+export type ForgeOverlayPlanRequest = {
+  doc_id: string;
+  page_index: number;
+  selection: ForgeOverlaySelection[];
+  user_prompt: string;
+};
+
+export type ForgeOverlayPlanResponse = {
+  schema_version: number;
+  ops: ForgeOverlayPatchOp[];
+};
+
+export type ForgeOverlayCommitRequest = {
+  doc_id: string;
+  page_index: number;
+  selection: ForgeOverlaySelection[];
+  ops: ForgeOverlayPatchOp[];
+};
+
+export type ForgeOverlayCommitResponse = {
+  patchset: {
+    patch_id: string;
+    created_at_iso: string;
+    ops: ForgeOverlayPatchOp[];
+  };
+  overlay: ForgeOverlayEntry[];
+};
+
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE = (RAW_API_BASE && RAW_API_BASE.trim().length > 0 ? RAW_API_BASE : "http://localhost:8000")
   .replace(/\/+$/, "");
@@ -245,6 +328,65 @@ export async function getDocumentMeta(docId: string): Promise<DocumentMeta> {
     );
   }
   return (await response.json()) as DocumentMeta;
+}
+
+export async function getForgeManifest(docId: string): Promise<ForgeManifest> {
+  const response = await fetch(apiUrl(`/v1/documents/${docId}/forge/manifest`));
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    const suffix = [response.status, detail.code].filter(Boolean).join(" ");
+    throw new Error(
+      detail.message
+        ? `Forge manifest failed (${suffix}): ${detail.message}`
+        : `Forge manifest failed (${suffix})`
+    );
+  }
+  return (await response.json()) as ForgeManifest;
+}
+
+export async function getForgeOverlay(docId: string, pageIndex: number): Promise<ForgeOverlayResponse> {
+  const response = await fetch(apiUrl(`/v1/documents/${docId}/forge/overlay?page_index=${pageIndex}`));
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    const suffix = [response.status, detail.code].filter(Boolean).join(" ");
+    throw new Error(
+      detail.message ? `Forge overlay failed (${suffix}): ${detail.message}` : `Forge overlay failed (${suffix})`
+    );
+  }
+  return (await response.json()) as ForgeOverlayResponse;
+}
+
+export async function planOverlayPatch(payload: ForgeOverlayPlanRequest): Promise<ForgeOverlayPlanResponse> {
+  const response = await fetch(apiUrl("/v1/ai/plan_overlay_patch"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    const suffix = [response.status, detail.code].filter(Boolean).join(" ");
+    throw new Error(detail.message ? `AI plan failed (${suffix}): ${detail.message}` : `AI plan failed (${suffix})`);
+  }
+  return (await response.json()) as ForgeOverlayPlanResponse;
+}
+
+export async function commitOverlayPatch(
+  docId: string,
+  payload: ForgeOverlayCommitRequest
+): Promise<ForgeOverlayCommitResponse> {
+  const response = await fetch(apiUrl(`/v1/documents/${docId}/forge/overlay/commit`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    const suffix = [response.status, detail.code].filter(Boolean).join(" ");
+    throw new Error(
+      detail.message ? `Overlay commit failed (${suffix}): ${detail.message}` : `Overlay commit failed (${suffix})`
+    );
+  }
+  return (await response.json()) as ForgeOverlayCommitResponse;
 }
 
 export async function getDecode(docId: string): Promise<DecodePayload> {

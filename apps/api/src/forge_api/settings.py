@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     FORGE_EXPORT_MASK_MODE: str = "AUTO_BG"
     FORGE_EXPORT_MASK_SOLID_COLOR: str = "255,255,255"
     FORGE_BUILD_VERSION: Optional[str] = None
+    FORGE_OPENAI_MODEL: Optional[str] = None
     WEB_ORIGIN: Optional[str] = None
     LOG_LEVEL: str = "INFO"
     OPENAI_API_KEY: Optional[str] = None

@@ -2,13 +2,33 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { FileText } from "lucide-react";
+import { FileText, MessageSquareText, Send } from "lucide-react";
 
-import { ChatDock } from "@/components/editor/ChatDock";
-import { InspectorPanel } from "@/components/editor/InspectorPanel";
-import { PatchTimeline } from "@/components/editor/PatchTimeline";
-import { PdfStage, PdfThumbnails } from "@/components/editor/PdfStage";
-import { exportPdfUrl, getDecode, getDocumentMeta, type ExportMaskMode } from "@/lib/api";
+import {
+  apiUrl,
+  commitOverlayPatch,
+  exportPdfUrl,
+  getDocumentMeta,
+  getForgeManifest,
+  getForgeOverlay,
+  planOverlayPatch,
+  type ExportMaskMode,
+  type ForgeManifest,
+  type ForgeManifestItem,
+  type ForgeOverlayEntry,
+  type ForgeOverlayPlanResponse,
+  type ForgeOverlaySelection
+} from "@/lib/api";
+
+type SelectedOverlay = {
+  page_index: number;
+  forge_id: string;
+  text: string;
+  bbox: number[];
+  content_hash: string;
+};
+
+const EMPTY_OVERLAY: Record<number, Record<string, ForgeOverlayEntry>> = {};
 
 export default function EditorPage() {
   const params = useParams<{ docId: string }>();
@@ -17,6 +37,17 @@ export default function EditorPage() {
   const [filename, setFilename] = useState("Loading…");
   const [sizeBytes, setSizeBytes] = useState(0);
   const [activePage, setActivePage] = useState(1);
+  const [manifest, setManifest] = useState<ForgeManifest | null>(null);
+  const [overlayByPage, setOverlayByPage] = useState<Record<number, Record<string, ForgeOverlayEntry>>>(
+    EMPTY_OVERLAY
+  );
+  const [selectedOverlay, setSelectedOverlay] = useState<SelectedOverlay | null>(null);
+  const [plan, setPlan] = useState<ForgeOverlayPlanResponse | null>(null);
+  const [prompt, setPrompt] = useState("");
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [isPlanning, setIsPlanning] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [maskMode, setMaskMode] = useState<ExportMaskMode>("AUTO_BG");
 
@@ -25,20 +56,22 @@ export default function EditorPage() {
 
     async function load() {
       try {
-        const [meta, decode] = await Promise.all([getDocumentMeta(docId), getDecode(docId)]);
+        const [meta, manifestPayload] = await Promise.all([getDocumentMeta(docId), getForgeManifest(docId)]);
         if (cancelled) {
           return;
         }
         setFilename(meta.filename);
         setSizeBytes(meta.size_bytes);
-        setPageCount(decode.page_count);
+        setPageCount(manifestPayload.page_count);
+        setManifest(manifestPayload);
         setActivePage(1);
+        setSelectedOverlay(null);
       } catch (err) {
         if (!cancelled) {
           const message =
             err instanceof Error && err.message
               ? err.message
-              : "We could not load the document metadata or decode data.";
+              : "We could not load the document metadata or forge manifest.";
           setError(`Unable to open this document. ${message} Return to the dashboard and retry.`);
         }
       }
@@ -49,6 +82,47 @@ export default function EditorPage() {
       cancelled = true;
     };
   }, [docId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOverlays() {
+      if (!manifest) {
+        return;
+      }
+      try {
+        const overlays = await Promise.all(
+          manifest.pages.map(async (page) => {
+            const response = await getForgeOverlay(docId, page.index);
+            return {
+              pageIndex: page.index,
+              overlay: response.overlay
+            };
+          })
+        );
+        if (cancelled) {
+          return;
+        }
+        const nextOverlay: Record<number, Record<string, ForgeOverlayEntry>> = {};
+        overlays.forEach(({ pageIndex, overlay }) => {
+          nextOverlay[pageIndex] = overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
+            acc[entry.forge_id] = entry;
+            return acc;
+          }, {});
+        });
+        setOverlayByPage(nextOverlay);
+      } catch (err) {
+        if (!cancelled) {
+          const message =
+            err instanceof Error && err.message ? err.message : "We could not load the overlay state.";
+          setError(`Unable to open this document. ${message}`);
+        }
+      }
+    }
+    void loadOverlays();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, manifest]);
 
   const sizeLabel = useMemo(() => {
     if (!sizeBytes) {
@@ -77,6 +151,99 @@ export default function EditorPage() {
     window.open(exportPdfUrl(docId, maskMode), "_blank", "noopener,noreferrer");
   };
 
+  const handleSelect = (pageIndex: number, item: ForgeManifestItem, overlayEntry?: ForgeOverlayEntry) => {
+    setActivePage(pageIndex + 1);
+    setSelectedOverlay({
+      page_index: pageIndex,
+      forge_id: item.forge_id,
+      text: overlayEntry?.text ?? item.text,
+      bbox: item.bbox,
+      content_hash: overlayEntry?.content_hash ?? item.content_hash
+    });
+    setPlan(null);
+    setPlanError(null);
+    setApplyError(null);
+  };
+
+  const selectionSnapshot: ForgeOverlaySelection[] | null = selectedOverlay
+    ? [
+        {
+          forge_id: selectedOverlay.forge_id,
+          text: selectedOverlay.text,
+          content_hash: selectedOverlay.content_hash,
+          bbox: selectedOverlay.bbox
+        }
+      ]
+    : null;
+
+  const handlePlan = async () => {
+    if (!selectedOverlay || !selectionSnapshot) {
+      setPlanError("Select a text element first.");
+      return;
+    }
+    if (!prompt.trim()) {
+      setPlanError("Enter a request for the selected element.");
+      return;
+    }
+    setIsPlanning(true);
+    setPlanError(null);
+    try {
+      const response = await planOverlayPatch({
+        doc_id: docId,
+        page_index: selectedOverlay.page_index,
+        selection: selectionSnapshot,
+        user_prompt: prompt.trim()
+      });
+      setPlan(response);
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : "Unable to plan overlay change.");
+    } finally {
+      setIsPlanning(false);
+    }
+  };
+
+  const handleApply = async () => {
+    if (!selectedOverlay || !selectionSnapshot || !plan) {
+      setApplyError("No overlay plan to apply.");
+      return;
+    }
+    setIsApplying(true);
+    setApplyError(null);
+    try {
+      const response = await commitOverlayPatch(docId, {
+        doc_id: docId,
+        page_index: selectedOverlay.page_index,
+        selection: selectionSnapshot,
+        ops: plan.ops
+      });
+      setOverlayByPage((prev) => ({
+        ...prev,
+        [selectedOverlay.page_index]: response.overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
+          acc[entry.forge_id] = entry;
+          return acc;
+        }, {})
+      }));
+      const updatedEntry = response.overlay.find((entry) => entry.forge_id === selectedOverlay.forge_id);
+      if (updatedEntry) {
+        setSelectedOverlay((current) =>
+          current
+            ? {
+                ...current,
+                text: updatedEntry.text,
+                content_hash: updatedEntry.content_hash
+              }
+            : current
+        );
+      }
+      setPlan(null);
+      setPrompt("");
+    } catch (err) {
+      setApplyError(err instanceof Error ? err.message : "Unable to apply overlay change.");
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col gap-6">
       <div className="flex items-center gap-4 rounded-2xl border border-forge-border bg-forge-panel/70 px-6 py-4">
@@ -93,13 +260,34 @@ export default function EditorPage() {
 
       <div className="grid flex-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)_320px]">
         <div className="hidden lg:block">
-          {pageCount > 0 ? (
-            <PdfThumbnails
-              docId={docId}
-              pageCount={pageCount}
-              activePage={activePage}
-              onSelect={setActivePage}
-            />
+          {manifest ? (
+            <div className="h-full overflow-y-auto rounded-2xl border border-forge-border bg-forge-panel/60 p-3">
+              <div className="flex flex-col gap-4">
+                {manifest.pages.map((page) => {
+                  const pageNumber = page.index + 1;
+                  const isActive = activePage === pageNumber;
+                  return (
+                    <button
+                      key={`thumb_${pageNumber}`}
+                      className={`rounded-xl border p-2 transition ${
+                        isActive
+                          ? "border-forge-accent bg-forge-card/80"
+                          : "border-forge-border bg-forge-card/40 hover:border-forge-accent/70"
+                      }`}
+                      type="button"
+                      onClick={() => setActivePage(pageNumber)}
+                    >
+                      <img
+                        src={apiUrl(page.image_path)}
+                        alt={`Page ${pageNumber}`}
+                        className="h-auto w-full rounded-lg"
+                      />
+                      <div className="mt-2 text-center text-xs text-slate-400">Page {pageNumber}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ) : (
             <div className="rounded-2xl border border-forge-border bg-forge-panel/60 p-4 text-sm text-slate-400">
               Loading thumbnails…
@@ -107,11 +295,154 @@ export default function EditorPage() {
           )}
         </div>
 
-        <PdfStage docId={docId} initialPageCount={pageCount} />
+        <div className="flex h-full flex-col gap-4">
+          <div className="flex items-center justify-between rounded-2xl border border-forge-border bg-forge-card/70 px-4 py-3">
+            <div className="text-sm text-slate-300">Overlay editor</div>
+            <div className="text-xs text-slate-400">Click text to edit</div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto scroll-smooth rounded-2xl border border-forge-border bg-forge-panel/50 p-4">
+            {!manifest ? (
+              <div className="text-sm text-slate-400">Loading document…</div>
+            ) : (
+              manifest.pages.map((page) => {
+                const overlayMap = overlayByPage[page.index] ?? {};
+                return (
+                  <div key={`page_${page.index}`} id={`page-${page.index + 1}`} className="mb-6 flex justify-center">
+                    <div
+                      className="relative shadow-xl"
+                      style={{ width: page.width_pt, height: page.height_pt }}
+                    >
+                      <img
+                        src={apiUrl(page.image_path)}
+                        alt={`Page ${page.index + 1}`}
+                        className="absolute inset-0 h-full w-full"
+                      />
+                      {page.items.map((item) => {
+                        const overlayEntry = overlayMap[item.forge_id];
+                        const displayText = overlayEntry?.text ?? item.text;
+                        const isSelected = selectedOverlay?.forge_id === item.forge_id;
+                        const [x0, y0, x1, y1] = item.bbox;
+                        return (
+                          <div
+                            key={item.forge_id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleSelect(page.index, item, overlayEntry)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                handleSelect(page.index, item, overlayEntry);
+                              }
+                            }}
+                            className={`absolute cursor-pointer select-none rounded-sm px-0.5 text-[10px] leading-none ${
+                              isSelected ? "ring-2 ring-forge-accent" : "hover:ring-1 hover:ring-forge-accent/50"
+                            }`}
+                            style={{
+                              left: x0,
+                              top: y0,
+                              width: x1 - x0,
+                              height: y1 - y0,
+                              color: item.color,
+                              fontSize: item.size,
+                              fontFamily: "Helvetica, Arial, sans-serif",
+                              whiteSpace: "pre",
+                              overflow: "hidden"
+                            }}
+                          >
+                            {displayText}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
 
         <div className="flex flex-col gap-4">
-          <InspectorPanel docId={docId} />
-          <PatchTimeline docId={docId} pageIndex={activePage - 1} />
+          <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
+            <h3 className="text-sm font-semibold text-slate-200">Inspector</h3>
+            {selectedOverlay ? (
+              <div className="mt-3 space-y-2 text-xs text-slate-300">
+                <p>
+                  <span className="text-slate-400">Forge ID:</span> {selectedOverlay.forge_id}
+                </p>
+                <p>
+                  <span className="text-slate-400">Page:</span> {selectedOverlay.page_index + 1}
+                </p>
+                <p>
+                  <span className="text-slate-400">Text:</span> {selectedOverlay.text}
+                </p>
+                <p>
+                  <span className="text-slate-400">BBox:</span>{" "}
+                  {selectedOverlay.bbox.map((value) => value.toFixed(2)).join(", ")}
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-slate-400">Select a text element to view details.</p>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+              <MessageSquareText className="h-4 w-4 text-forge-accent-soft" />
+              ChatDock
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              Describe the change you want. The assistant will draft a patch for your selected element.
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <textarea
+                className="min-h-[80px] w-full rounded-xl border border-forge-border bg-forge-panel/60 p-2 text-xs text-slate-200"
+                placeholder="e.g., Change this to Panel B"
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+              <button
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-forge-border bg-forge-card/70 px-3 py-2 text-xs text-slate-200"
+                type="button"
+                onClick={() => void handlePlan()}
+                disabled={isPlanning || !prompt.trim()}
+              >
+                <Send className="h-3.5 w-3.5" />
+                {isPlanning ? "Planning…" : "Plan patch"}
+              </button>
+              {planError ? <p className="text-xs text-red-300">{planError}</p> : null}
+            </div>
+
+            {plan ? (
+              <div className="mt-4 rounded-xl border border-forge-border bg-forge-panel/60 p-3 text-xs text-slate-300">
+                <p className="text-[11px] text-slate-400">Proposed changes</p>
+                <ul className="mt-2 space-y-1">
+                  {plan.ops.map((op) => (
+                    <li key={`${op.type}-${op.forge_id}`}>
+                      <span className="text-slate-400">{op.forge_id.slice(0, 6)}:</span> {op.new_text}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    className="flex-1 rounded-lg border border-forge-border bg-forge-card/70 px-3 py-2 text-xs text-slate-200"
+                    type="button"
+                    onClick={() => void handleApply()}
+                    disabled={isApplying}
+                  >
+                    {isApplying ? "Applying…" : "Apply"}
+                  </button>
+                  <button
+                    className="flex-1 rounded-lg border border-forge-border bg-forge-panel/60 px-3 py-2 text-xs text-slate-300"
+                    type="button"
+                    onClick={() => setPlan(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {applyError ? <p className="mt-2 text-xs text-red-300">{applyError}</p> : null}
+              </div>
+            ) : null}
+          </div>
           <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
             <h3 className="text-sm font-semibold text-slate-200">Export</h3>
             <div className="mt-3 space-y-3 text-xs text-slate-400">
@@ -143,7 +474,6 @@ export default function EditorPage() {
               <p>Size: {sizeLabel}</p>
             </div>
           </div>
-          <ChatDock docId={docId} />
         </div>
       </div>
     </div>

@@ -9,6 +9,8 @@ class DocumentMeta(BaseModel):
     filename: str
     size_bytes: int
     created_at_iso: datetime
+    has_forge_manifest: bool = False
+    forge_manifest_url: str | None = None
 
 
 class UploadResponse(BaseModel):

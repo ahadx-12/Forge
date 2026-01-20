@@ -97,7 +97,18 @@ async def upload_document(file: UploadFile = File(...)) -> UploadResponse:
 
 @router.get("/{doc_id}", response_model=DocumentMeta)
 def get_document(doc_id: str) -> DocumentMeta:
-    return _load_meta(doc_id)
+    meta = _load_meta(doc_id)
+    storage = get_storage()
+    manifest_key = f"docs/{doc_id}/forge/manifest.json"
+    has_manifest = storage.exists(manifest_key)
+    return DocumentMeta(
+        doc_id=meta.doc_id,
+        filename=meta.filename,
+        size_bytes=meta.size_bytes,
+        created_at_iso=meta.created_at_iso,
+        has_forge_manifest=has_manifest,
+        forge_manifest_url=f"/v1/documents/{doc_id}/forge/manifest" if has_manifest else None,
+    )
 
 
 @router.get("/{doc_id}/download")
