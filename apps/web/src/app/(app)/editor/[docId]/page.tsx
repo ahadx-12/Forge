@@ -20,6 +20,7 @@ import {
   type ForgeOverlayPlanResponse,
   type ForgeOverlaySelection
 } from "@/lib/api";
+import { createBBoxConverter, type BBox } from "@/components/editor/overlayGeometry";
 
 type SelectedOverlay = {
   page_index: number;
@@ -535,6 +536,32 @@ function OverlayPageCanvas({
   const imgRef = useRef<HTMLImageElement>(null);
   const [containerSize, setContainerSize] = useState<ImageDimensions>({ width: 0, height: 0 });
   const [imageLoaded, setImageLoaded] = useState(false);
+  const overlayBboxes = useMemo<BBox[]>(() => {
+    const maskBboxes = overlayState?.masks?.map((mask) => mask.bbox as BBox) ?? [];
+    const elementBboxes = page.elements.map((element) => element.bbox as BBox);
+    return [...maskBboxes, ...elementBboxes];
+  }, [overlayState?.masks, page.elements]);
+
+  const { toPixelRect } = useMemo(
+    () =>
+      createBBoxConverter(overlayBboxes, {
+        containerWidth: containerSize.width,
+        containerHeight: containerSize.height,
+        pageWidthPt: page.width_pt,
+        pageHeightPt: page.height_pt,
+        imageWidthPx: overlayState?.pageImageWidthPx,
+        imageHeightPx: overlayState?.pageImageHeightPx
+      }),
+    [
+      overlayBboxes,
+      containerSize.height,
+      containerSize.width,
+      page.height_pt,
+      page.width_pt,
+      overlayState?.pageImageHeightPx,
+      overlayState?.pageImageWidthPx
+    ]
+  );
 
   useEffect(() => {
     const img = imgRef.current;
@@ -572,20 +599,17 @@ function OverlayPageCanvas({
       {imageLoaded && containerSize.width > 0 ? (
         <div className="absolute inset-0 pointer-events-none">
           {overlayState?.masks?.map((mask, idx) => {
-            const x = mask.bbox[0] * containerSize.width;
-            const y = mask.bbox[1] * containerSize.height;
-            const w = (mask.bbox[2] - mask.bbox[0]) * containerSize.width;
-            const h = (mask.bbox[3] - mask.bbox[1]) * containerSize.height;
+            const rect = toPixelRect(mask.bbox as BBox);
 
             return (
               <div
                 key={`mask_${idx}`}
                 style={{
                   position: "absolute",
-                  left: x,
-                  top: y,
-                  width: w,
-                  height: h,
+                  left: rect.left,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height,
                   backgroundColor: mask.color
                 }}
               />
@@ -596,17 +620,15 @@ function OverlayPageCanvas({
             const overlayEntry = overlayState?.entries?.[element.element_id];
             const displayText = overlayEntry?.text ?? element.text;
             const isSelected = selectedOverlay?.element_id === element.element_id;
+            const isEdited = Boolean(overlayEntry);
 
-            const x = element.bbox[0] * containerSize.width;
-            const y = element.bbox[1] * containerSize.height;
-            const w = (element.bbox[2] - element.bbox[0]) * containerSize.width;
-            const h = (element.bbox[3] - element.bbox[1]) * containerSize.height;
+            const rect = toPixelRect(element.bbox as BBox);
 
             const fontFamily = getFontFamily(element.style.font_family || "");
             let fontSize = (element.style.font_size_pt / page.width_pt) * containerSize.width;
             const textWidth = measureTextWidth(displayText, fontSize, fontFamily);
-            if (textWidth > w * 1.1) {
-              const scaleFactor = w / textWidth;
+            if (textWidth > rect.width * 1.1) {
+              const scaleFactor = rect.width / textWidth;
               fontSize = fontSize * scaleFactor * 0.95;
             }
 
@@ -620,18 +642,19 @@ function OverlayPageCanvas({
                     : "hover:ring-1 hover:ring-blue-300/50 hover:bg-blue-300/5"
                 }`}
                 style={{
-                  left: x,
-                  top: y,
-                  width: w,
-                  height: h,
-                  color: element.style.color,
+                  left: rect.left,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height,
+                  color: isEdited ? (element.style.color || "#000") : "transparent",
+                  backgroundColor: isEdited ? "#fff" : undefined,
                   fontSize,
                   fontWeight: element.style.is_bold ? "bold" : "normal",
                   fontFamily,
                   lineHeight: element.element_type === "text" ? 1.4 : 1.2,
                   whiteSpace: element.element_type === "text" ? "pre-wrap" : "pre-wrap",
                   overflow: "visible",
-                  padding: "2px",
+                  padding: "0px",
                   display: "flex",
                   alignItems: "flex-start"
                 }}
@@ -643,20 +666,17 @@ function OverlayPageCanvas({
 
           {showDebugOverlay
             ? page.elements.slice(0, DEBUG_OVERLAY_LIMIT).map((element) => {
-                const x = element.bbox[0] * containerSize.width;
-                const y = element.bbox[1] * containerSize.height;
-                const w = (element.bbox[2] - element.bbox[0]) * containerSize.width;
-                const h = (element.bbox[3] - element.bbox[1]) * containerSize.height;
+                const rect = toPixelRect(element.bbox as BBox);
 
                 return (
                   <div
                     key={`debug_${element.element_id}`}
                     style={{
                       position: "absolute",
-                      left: x,
-                      top: y,
-                      width: w,
-                      height: h,
+                      left: rect.left,
+                      top: rect.top,
+                      width: rect.width,
+                      height: rect.height,
                       border: "1px solid yellow",
                       pointerEvents: "none"
                     }}
