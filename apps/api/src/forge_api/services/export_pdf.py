@@ -230,7 +230,8 @@ def export_pdf_with_overlays(
                 manifest_page = manifest_pages.get(page_index)
                 if manifest_page:
                     manifest_items = {item.get("forge_id"): item for item in manifest_page.get("items", [])}
-                    for forge_id, overlay in overlay_state.get(page_index, {}).items():
+                    page_overlay = overlay_state.get(page_index, {})
+                    for forge_id, overlay in page_overlay.get("primitives", {}).items():
                         base_item = manifest_items.get(forge_id)
                         if not base_item:
                             continue

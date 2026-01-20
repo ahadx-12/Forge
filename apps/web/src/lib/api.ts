@@ -213,12 +213,25 @@ export type ForgeOverlayEntry = {
   forge_id: string;
   text: string;
   content_hash: string;
+  bbox_px: number[];
+};
+
+export type ForgeOverlayMask = {
+  bbox_px: number[];
+  color: string;
 };
 
 export type ForgeOverlayResponse = {
   doc_id: string;
   page_index: number;
   overlay: ForgeOverlayEntry[];
+  masks: ForgeOverlayMask[];
+  page_image_width_px?: number;
+  page_image_height_px?: number;
+  pdf_box_width_pt?: number;
+  pdf_box_height_pt?: number;
+  rotation?: number;
+  used_box?: string;
 };
 
 export type ForgeOverlaySelection = {
@@ -262,6 +275,7 @@ export type ForgeOverlayCommitResponse = {
     ops: ForgeOverlayPatchOp[];
   };
   overlay: ForgeOverlayEntry[];
+  masks: ForgeOverlayMask[];
 };
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
