@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { FileText, Grid2x2, LayoutPanelLeft, Settings } from "lucide-react";
+import type { Route } from "next";
+import { FileText, LayoutPanelLeft, Settings } from "lucide-react";
 
 const navItems = [
-  { icon: FileText, label: "Documents", href: "/documents" },
-  { icon: LayoutPanelLeft, label: "Editor", href: "/editor" },
-  { icon: Settings, label: "Settings", href: "/settings" },
+  { icon: FileText, label: "Documents", href: "/documents" as Route },
+  { icon: LayoutPanelLeft, label: "Editor", href: "/editor" as Route },
+  { icon: Settings, label: "Settings", href: "/settings" as Route },
 ] as const;
 
 type NavItem = (typeof navItems)[number];

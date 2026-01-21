@@ -5,7 +5,7 @@ from html import escape
 from typing import Any
 
 from forge_api.services.forge_manifest import build_forge_manifest
-from forge_api.services.forge_overlay import build_overlay_state, load_overlay_patch_log
+from forge_api.services.forge_overlay import build_overlay_state, load_overlay_custom_entries, load_overlay_patch_log
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,11 @@ def export_pdf_from_html(doc_id: str) -> HtmlExportResult:
     if not pages:
         raise FileNotFoundError("Document not found")
 
-    overlay_state = build_overlay_state(manifest, load_overlay_patch_log(doc_id))
+    overlay_state = build_overlay_state(
+        manifest,
+        load_overlay_patch_log(doc_id),
+        custom_entries=load_overlay_custom_entries(doc_id),
+    )
     first_page = pages[0]
     width_in = float(first_page.get("width_pt") or 0) / 72
     height_in = float(first_page.get("height_pt") or 0) / 72
