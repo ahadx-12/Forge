@@ -14,7 +14,7 @@ from forge_api.schemas.patch import PatchOp
 from forge_api.services.ir_pdf import get_page_ir
 from forge_api.services.export_html_pdf import export_pdf_from_html
 from forge_api.services.forge_manifest import build_forge_manifest
-from forge_api.services.forge_overlay import build_overlay_state, load_overlay_patch_log
+from forge_api.services.forge_overlay import build_overlay_state, load_overlay_custom_entries, load_overlay_patch_log
 from forge_api.services.patch_store import load_patch_log
 from forge_api.settings import get_settings
 from forge_api.services.storage import get_storage
@@ -255,7 +255,11 @@ def export_pdf_with_overlays(
         overlay_state = None
         try:
             manifest = build_forge_manifest(doc_id)
-            overlay_state = build_overlay_state(manifest, load_overlay_patch_log(doc_id))
+            overlay_state = build_overlay_state(
+                manifest,
+                load_overlay_patch_log(doc_id),
+                custom_entries=load_overlay_custom_entries(doc_id),
+            )
         except FileNotFoundError:
             manifest = None
             overlay_state = None
@@ -291,49 +295,49 @@ def export_pdf_with_overlays(
                     elif primitive.kind == "text":
                         _draw_text(page, primitive, primitive.bbox, doc_id, page_index)
 
-            if manifest and overlay_state:
-                manifest_pages = {page_item.get("page_index"): page_item for page_item in manifest.get("pages", [])}
-                manifest_page = manifest_pages.get(page_index)
-                if manifest_page:
-                    manifest_items = {item.get("element_id"): item for item in manifest_page.get("elements", [])}
-                    page_overlay = overlay_state.get(page_index, {})
-                    for element_id, overlay in page_overlay.get("primitives", {}).items():
-                        base_item = manifest_items.get(element_id)
-                        if not base_item:
-                            continue
-                        if overlay.get("text") == base_item.get("text"):
-                            continue
-                        rect = _normalized_bbox_to_pdf_rect(base_item.get("bbox") or [0.0, 0.0, 0.0, 0.0], page, page.rotation)
-                        fill_color = solid_color
-                        if requested_mode == "AUTO_BG":
-                            sampled = _sample_background_color(page, rect)
-                            if sampled is None:
-                                warning = "AUTO_BG_FAILED"
-                                fill_color = solid_color
-                            else:
-                                fill_color = sampled
-                        _overlay_rect(page, list(rect), padding_pt, fill_color)
-                        style = base_item.get("style") or {}
-                        font_name = _overlay_font(style.get("font_family"), bool(style.get("is_bold")))
-                        font_size = float(style.get("font_size_pt") or 12)
-                        color = _hex_to_rgb(style.get("color"))
-                        text_value = overlay.get("text") or ""
-                        try:
-                            page.insert_text(
-                                (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
-                                text_value,
-                                fontname=font_name,
-                                fontsize=font_size,
-                                color=color,
-                            )
-                        except (RuntimeError, ValueError):
-                            page.insert_text(
-                                (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
-                                text_value,
-                                fontname=DEFAULT_FONT,
-                                fontsize=font_size,
-                                color=color,
-                            )
+            if overlay_state:
+                page_overlay = overlay_state.get(page_index, {})
+                for element_id, overlay in page_overlay.get("primitives", {}).items():
+                    base_text = overlay.get("base_text")
+                    if base_text is None:
+                        base_text = overlay.get("text")
+                    if overlay.get("text") == base_text:
+                        continue
+                    rect = _normalized_bbox_to_pdf_rect(
+                        overlay.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                        page,
+                        page.rotation,
+                    )
+                    fill_color = solid_color
+                    if requested_mode == "AUTO_BG":
+                        sampled = _sample_background_color(page, rect)
+                        if sampled is None:
+                            warning = "AUTO_BG_FAILED"
+                            fill_color = solid_color
+                        else:
+                            fill_color = sampled
+                    _overlay_rect(page, list(rect), padding_pt, fill_color)
+                    style = overlay.get("style") or {}
+                    font_name = _overlay_font(style.get("font_family"), bool(style.get("is_bold")))
+                    font_size = float(style.get("font_size_pt") or 12)
+                    color = _hex_to_rgb(style.get("color"))
+                    text_value = overlay.get("text") or ""
+                    try:
+                        page.insert_text(
+                            (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
+                            text_value,
+                            fontname=font_name,
+                            fontsize=font_size,
+                            color=color,
+                        )
+                    except (RuntimeError, ValueError):
+                        page.insert_text(
+                            (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
+                            text_value,
+                            fontname=DEFAULT_FONT,
+                            fontsize=font_size,
+                            color=color,
+                        )
 
         buffer = BytesIO()
         doc.save(buffer)

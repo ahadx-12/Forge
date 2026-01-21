@@ -175,3 +175,8 @@ def download_document(doc_id: str, request: Request) -> Response:
             "Accept-Ranges": "bytes",
         },
     )
+
+
+@router.get("/{doc_id}/file")
+def get_document_file(doc_id: str, request: Request) -> Response:
+    return download_document(doc_id, request)

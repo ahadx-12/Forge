@@ -333,6 +333,15 @@ export function downloadUrl(docId: string): string {
   return apiUrl(`/v1/documents/${docId}/download`);
 }
 
+export async function getDocumentFile(docId: string): Promise<ArrayBuffer> {
+  const response = await fetch(apiUrl(`/v1/documents/${docId}/file`));
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    throw new Error(detail.message || "Unable to fetch document file.");
+  }
+  return response.arrayBuffer();
+}
+
 export function exportPdfUrl(docId: string, maskMode?: ExportMaskMode): string {
   if (maskMode) {
     const params = new URLSearchParams({ mask_mode: maskMode });

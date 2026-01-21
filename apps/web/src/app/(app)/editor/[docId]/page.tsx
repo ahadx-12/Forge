@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { FileText, MessageSquareText, Send } from "lucide-react";
+import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 
 import {
   apiUrl,
   commitOverlayPatch,
   exportPdfUrl,
+  getDocumentFile,
   getDocumentMeta,
   getForgeManifest,
   getForgeOverlay,
@@ -20,8 +23,8 @@ import {
   type ForgeOverlayPlanResponse,
   type ForgeOverlaySelection
 } from "@/lib/api";
-import { createBBoxConverter, type BBox } from "@/components/editor/overlayGeometry";
-import { getPageCanvasSize, normalizedToPixelRect } from "@/components/editor/pageCanvas";
+import { PdfJsPage, type PdfJsSelectionItem } from "@/components/editor/PdfJsPage";
+import { getPdfWorkerSrc } from "@/lib/pdfjs";
 
 type SelectedOverlay = {
   page_index: number;
@@ -30,7 +33,7 @@ type SelectedOverlay = {
   bbox: number[];
   content_hash: string;
   element_type: ForgeManifestElement["element_type"];
-  style: ForgeManifestElement["style"];
+  style?: ForgeManifestElement["style"];
 };
 
 type OverlayPageState = {
@@ -40,37 +43,14 @@ type OverlayPageState = {
   pageImageHeightPx?: number;
 };
 
-type ImageDimensions = {
-  width: number;
-  height: number;
-};
-
 const EMPTY_OVERLAY: Record<number, OverlayPageState> = {};
-const DEBUG_OVERLAY_LIMIT = 60;
-const EDITOR_RENDER_MODE = (process.env.NEXT_PUBLIC_FORGE_EDITOR_RENDER_MODE || "html").toLowerCase();
 
-const getFontFamily = (pdfFont: string) => {
-  const lower = pdfFont.toLowerCase();
-  if (lower.includes("times") || lower.includes("serif")) {
-    return '"Times New Roman", Times, serif';
-  }
-  if (lower.includes("courier") || lower.includes("mono")) {
-    return '"Courier New", Courier, monospace';
-  }
-  return "Helvetica, Arial, -apple-system, BlinkMacSystemFont, sans-serif";
-};
-
-const measureTextWidth = (text: string, fontSize: number, fontFamily: string): number => {
-  if (typeof document === "undefined") {
-    return text.length * fontSize * 0.6;
-  }
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-  if (!context) {
-    return text.length * fontSize * 0.6;
-  }
-  context.font = `${fontSize}px ${fontFamily}`;
-  return context.measureText(text).width;
+const computeContentHash = async (text: string): Promise<string> => {
+  const data = new TextEncoder().encode(text);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 };
 
 export default function EditorPage() {
@@ -84,6 +64,9 @@ export default function EditorPage() {
   const [overlayByPage, setOverlayByPage] = useState<Record<number, OverlayPageState>>(
     EMPTY_OVERLAY
   );
+  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
   const [selectedOverlay, setSelectedOverlay] = useState<SelectedOverlay | null>(null);
   const [plan, setPlan] = useState<ForgeOverlayPlanResponse | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -94,6 +77,56 @@ export default function EditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [maskMode, setMaskMode] = useState<ExportMaskMode>("AUTO_BG");
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      GlobalWorkerOptions.workerSrc = getPdfWorkerSrc();
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: PDFDocumentLoadingTask | null = null;
+
+    async function loadPdf() {
+      setPdfDocument(null);
+      setPdfError(null);
+      try {
+        if (pdfDocRef.current) {
+          await pdfDocRef.current.destroy();
+          pdfDocRef.current = null;
+        }
+        const data = await getDocumentFile(docId);
+        if (cancelled) {
+          return;
+        }
+        loadingTask = getDocument({ data });
+        const doc = await loadingTask.promise;
+        if (cancelled) {
+          await doc.destroy();
+          return;
+        }
+        pdfDocRef.current = doc;
+        setPdfDocument(doc);
+      } catch (err) {
+        if (!cancelled) {
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : "We could not load the PDF file.";
+          setPdfError(message);
+        }
+      }
+    }
+
+    void loadPdf();
+    return () => {
+      cancelled = true;
+      void loadingTask?.destroy();
+      void pdfDocRef.current?.destroy();
+      pdfDocRef.current = null;
+    };
+  }, [docId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -203,17 +236,31 @@ export default function EditorPage() {
     window.open(exportPdfUrl(docId, maskMode), "_blank", "noopener,noreferrer");
   };
 
-  const handleSelect = (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => {
+  const handleSelect = (pageIndex: number, item: PdfJsSelectionItem, overlayEntry?: ForgeOverlayEntry) => {
     setActivePage(pageIndex + 1);
-    setSelectedOverlay({
+    const displayText = overlayEntry?.text ?? item.text;
+    const nextSelection: SelectedOverlay = {
       page_index: pageIndex,
       element_id: item.element_id,
-      text: overlayEntry?.text ?? item.text,
+      text: displayText,
       bbox: item.bbox,
       content_hash: overlayEntry?.content_hash ?? "",
-      element_type: item.element_type,
+      element_type: item.element_type ?? "text",
       style: item.style
-    });
+    };
+    setSelectedOverlay(nextSelection);
+    if (!overlayEntry?.content_hash) {
+      void computeContentHash(displayText).then((hash) => {
+        setSelectedOverlay((current) =>
+          current && current.element_id === nextSelection.element_id
+            ? {
+                ...current,
+                content_hash: hash
+              }
+            : current
+        );
+      });
+    }
     setPlan(null);
     setPlanError(null);
     setApplyError(null);
@@ -378,6 +425,12 @@ export default function EditorPage() {
           <div className="flex-1 overflow-y-auto scroll-smooth rounded-2xl border border-forge-border bg-forge-panel/50 p-4">
             {!manifest ? (
               <div className="text-sm text-slate-400">Loading document…</div>
+            ) : pdfError ? (
+              <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+                {pdfError}
+              </div>
+            ) : !pdfDocument ? (
+              <div className="text-sm text-slate-400">Loading PDF…</div>
             ) : (
               manifest.pages.map((page) => {
                 const overlayState = overlayByPage[page.page_index];
@@ -387,12 +440,16 @@ export default function EditorPage() {
                     id={`page-${page.page_index + 1}`}
                     className="mb-6 flex justify-center"
                   >
-                    <OverlayPageCanvas
-                      page={page}
-                      overlayState={overlayState}
-                      selectedOverlay={selectedOverlay}
+                    <PdfJsPage
+                      pdfDocument={pdfDocument}
+                      pageIndex={page.page_index}
+                      overlayEntries={overlayState?.entries}
+                      overlayMasks={overlayState?.masks}
+                      selectedElementId={selectedOverlay?.element_id}
                       showDebugOverlay={showDebugOverlay}
-                      onSelect={handleSelect}
+                      onSelect={(item, overlayEntry) =>
+                        handleSelect(page.page_index, item, overlayEntry)
+                      }
                     />
                   </div>
                 );
@@ -516,358 +573,6 @@ export default function EditorPage() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-type ForgeManifestPage = ForgeManifest["pages"][number];
-
-function OverlayPageCanvas({
-  page,
-  overlayState,
-  selectedOverlay,
-  showDebugOverlay,
-  onSelect
-}: {
-  page: ForgeManifestPage;
-  overlayState?: OverlayPageState;
-  selectedOverlay: SelectedOverlay | null;
-  showDebugOverlay: boolean;
-  onSelect: (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => void;
-}) {
-  if (EDITOR_RENDER_MODE === "png_overlay") {
-    return (
-      <LegacyOverlayCanvas
-        page={page}
-        overlayState={overlayState}
-        selectedOverlay={selectedOverlay}
-        showDebugOverlay={showDebugOverlay}
-        onSelect={onSelect}
-      />
-    );
-  }
-
-  return (
-    <HtmlPageCanvas
-      page={page}
-      overlayState={overlayState}
-      selectedOverlay={selectedOverlay}
-      showDebugOverlay={showDebugOverlay}
-      onSelect={onSelect}
-    />
-  );
-}
-
-function HtmlPageCanvas({
-  page,
-  overlayState,
-  selectedOverlay,
-  showDebugOverlay,
-  onSelect
-}: {
-  page: ForgeManifestPage;
-  overlayState?: OverlayPageState;
-  selectedOverlay: SelectedOverlay | null;
-  showDebugOverlay: boolean;
-  onSelect: (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => void;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
-  const pageSize = useMemo(
-    () => getPageCanvasSize(containerWidth, page.width_pt, page.height_pt),
-    [containerWidth, page.height_pt, page.width_pt]
-  );
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) {
-      return;
-    }
-
-    const updateSize = () => {
-      setContainerWidth(container.clientWidth);
-    };
-
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(container);
-    updateSize();
-
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
-
-  return (
-    <div ref={containerRef} className="w-full" data-page-index={page.page_index}>
-      <div
-        className="relative mx-auto max-w-full rounded-lg bg-white shadow-xl"
-        style={{
-          width: pageSize.width,
-          height: pageSize.height
-        }}
-      >
-        {page.elements.map((element) => {
-          const overlayEntry = overlayState?.entries?.[element.element_id];
-          const displayText = overlayEntry?.text ?? element.text;
-          const isSelected = selectedOverlay?.element_id === element.element_id;
-
-          const rect = normalizedToPixelRect(element.bbox as BBox, pageSize);
-
-          const fontFamily = getFontFamily(element.style.font_family || "");
-          const baseFontSize = (element.style.font_size_pt / page.width_pt) * pageSize.width;
-          const minFontSize = baseFontSize * 0.7;
-          let fontSize = baseFontSize;
-          const initialTextWidth = measureTextWidth(displayText, fontSize, fontFamily);
-          if (initialTextWidth > rect.width) {
-            const scaleFactor = rect.width / initialTextWidth;
-            fontSize = Math.max(baseFontSize * scaleFactor, minFontSize);
-          }
-          const scaledTextWidth = measureTextWidth(displayText, fontSize, fontFamily);
-
-          const lineCount = element.lines?.length || displayText.split("\n").length || 1;
-          const lineHeightPx =
-            element.style.line_height && page.width_pt
-              ? (element.style.line_height / page.width_pt) * pageSize.width
-              : rect.height / Math.max(1, lineCount);
-
-          const wrapPolicy =
-            element.style.wrap_policy ?? (element.element_type === "text" ? "auto" : "nowrap");
-          const shouldWrap =
-            wrapPolicy === "prewrap" ||
-            (wrapPolicy === "auto" &&
-              (displayText.includes("\n") || scaledTextWidth > rect.width * 1.05));
-          const needsClamp = wrapPolicy === "nowrap" && scaledTextWidth > rect.width;
-
-          return (
-            <div
-              key={element.element_id}
-              onClick={() => onSelect(page.page_index, element, overlayEntry)}
-              className={`absolute cursor-pointer pointer-events-auto transition-all duration-150 ${
-                isSelected
-                  ? "ring-2 ring-blue-500 bg-blue-500/10 z-20"
-                  : "hover:ring-1 hover:ring-blue-300/50 hover:bg-blue-300/5"
-              }`}
-              style={{
-                left: rect.left,
-                top: rect.top,
-                width: rect.width,
-                height: rect.height,
-                color: element.style.color || "#000",
-                fontSize,
-                fontWeight: element.style.is_bold ? "bold" : "normal",
-                fontStyle: element.style.is_italic ? "italic" : "normal",
-                fontFamily,
-                lineHeight: `${lineHeightPx}px`,
-                whiteSpace: shouldWrap ? "pre-wrap" : "nowrap",
-                overflow: "hidden",
-                textOverflow: needsClamp ? "ellipsis" : "clip",
-                padding: "0px",
-                display: "flex",
-                alignItems: "flex-start"
-              }}
-            >
-              {displayText}
-            </div>
-          );
-        })}
-
-        {showDebugOverlay
-          ? page.elements.slice(0, DEBUG_OVERLAY_LIMIT).map((element) => {
-              const rect = normalizedToPixelRect(element.bbox as BBox, pageSize);
-
-              return (
-                <div
-                  key={`debug_${element.element_id}`}
-                  style={{
-                    position: "absolute",
-                    left: rect.left,
-                    top: rect.top,
-                    width: rect.width,
-                    height: rect.height,
-                    border: "1px solid yellow",
-                    pointerEvents: "none"
-                  }}
-                >
-                  <span className="text-xs bg-yellow-500/50 px-1">{element.element_id}</span>
-                </div>
-              );
-            })
-          : null}
-      </div>
-    </div>
-  );
-}
-
-function LegacyOverlayCanvas({
-  page,
-  overlayState,
-  selectedOverlay,
-  showDebugOverlay,
-  onSelect
-}: {
-  page: ForgeManifestPage;
-  overlayState?: OverlayPageState;
-  selectedOverlay: SelectedOverlay | null;
-  showDebugOverlay: boolean;
-  onSelect: (pageIndex: number, item: ForgeManifestElement, overlayEntry?: ForgeOverlayEntry) => void;
-}) {
-  const imgRef = useRef<HTMLImageElement>(null);
-  const [containerSize, setContainerSize] = useState<ImageDimensions>({ width: 0, height: 0 });
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const overlayBboxes = useMemo<BBox[]>(() => {
-    const maskBboxes = overlayState?.masks?.map((mask) => mask.bbox as BBox) ?? [];
-    const elementBboxes = page.elements.map((element) => element.bbox as BBox);
-    return [...maskBboxes, ...elementBboxes];
-  }, [overlayState?.masks, page.elements]);
-
-  const { toPixelRect } = useMemo(
-    () =>
-      createBBoxConverter(overlayBboxes, {
-        containerWidth: containerSize.width,
-        containerHeight: containerSize.height,
-        pageWidthPt: page.width_pt,
-        pageHeightPt: page.height_pt,
-        imageWidthPx: overlayState?.pageImageWidthPx,
-        imageHeightPx: overlayState?.pageImageHeightPx
-      }),
-    [
-      overlayBboxes,
-      containerSize.height,
-      containerSize.width,
-      page.height_pt,
-      page.width_pt,
-      overlayState?.pageImageHeightPx,
-      overlayState?.pageImageWidthPx
-    ]
-  );
-
-  useEffect(() => {
-    const img = imgRef.current;
-    if (!img) {
-      return;
-    }
-
-    const updateSize = () => {
-      setContainerSize({
-        width: img.clientWidth,
-        height: img.clientHeight
-      });
-    };
-
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(img);
-    img.addEventListener("load", updateSize);
-
-    return () => {
-      observer.disconnect();
-      img.removeEventListener("load", updateSize);
-    };
-  }, []);
-
-  return (
-    <div className="relative inline-block max-w-full shadow-xl" data-page-index={page.page_index}>
-      <img
-        ref={imgRef}
-        src={apiUrl(page.image_path)}
-        alt={`Page ${page.page_index + 1}`}
-        className="block h-auto max-w-full"
-        onLoad={() => setImageLoaded(true)}
-      />
-
-      {imageLoaded && containerSize.width > 0 ? (
-        <div className="absolute inset-0 pointer-events-none">
-          {overlayState?.masks?.map((mask, idx) => {
-            const rect = toPixelRect(mask.bbox as BBox);
-
-            return (
-              <div
-                key={`mask_${idx}`}
-                style={{
-                  position: "absolute",
-                  left: rect.left,
-                  top: rect.top,
-                  width: rect.width,
-                  height: rect.height,
-                  backgroundColor: mask.color
-                }}
-              />
-            );
-          })}
-
-          {page.elements.map((element) => {
-            const overlayEntry = overlayState?.entries?.[element.element_id];
-            const displayText = overlayEntry?.text ?? element.text;
-            const isSelected = selectedOverlay?.element_id === element.element_id;
-            const isEdited = Boolean(overlayEntry);
-
-            const rect = toPixelRect(element.bbox as BBox);
-
-            const fontFamily = getFontFamily(element.style.font_family || "");
-            let fontSize = (element.style.font_size_pt / page.width_pt) * containerSize.width;
-            const textWidth = measureTextWidth(displayText, fontSize, fontFamily);
-            if (textWidth > rect.width * 1.1) {
-              const scaleFactor = rect.width / textWidth;
-              fontSize = fontSize * scaleFactor * 0.95;
-            }
-
-            return (
-              <div
-                key={element.element_id}
-                onClick={() => onSelect(page.page_index, element, overlayEntry)}
-                className={`absolute cursor-pointer pointer-events-auto transition-all duration-150 ${
-                  isSelected
-                    ? "ring-2 ring-blue-500 bg-blue-500/10 z-20"
-                    : "hover:ring-1 hover:ring-blue-300/50 hover:bg-blue-300/5"
-                }`}
-                style={{
-                  left: rect.left,
-                  top: rect.top,
-                  width: rect.width,
-                  height: rect.height,
-                  color: isEdited ? (element.style.color || "#000") : "transparent",
-                  backgroundColor: isEdited ? "#fff" : undefined,
-                  fontSize,
-                  fontWeight: element.style.is_bold ? "bold" : "normal",
-                  fontFamily,
-                  lineHeight: element.element_type === "text" ? 1.4 : 1.2,
-                  whiteSpace: element.element_type === "text" ? "pre-wrap" : "pre-wrap",
-                  overflow: "visible",
-                  padding: "0px",
-                  display: "flex",
-                  alignItems: "flex-start"
-                }}
-              >
-                {displayText}
-              </div>
-            );
-          })}
-
-          {showDebugOverlay
-            ? page.elements.slice(0, DEBUG_OVERLAY_LIMIT).map((element) => {
-                const rect = toPixelRect(element.bbox as BBox);
-
-                return (
-                  <div
-                    key={`debug_${element.element_id}`}
-                    style={{
-                      position: "absolute",
-                      left: rect.left,
-                      top: rect.top,
-                      width: rect.width,
-                      height: rect.height,
-                      border: "1px solid yellow",
-                      pointerEvents: "none"
-                    }}
-                  >
-                    <span className="text-xs bg-yellow-500/50 px-1">
-                      {element.element_id}
-                    </span>
-                  </div>
-                );
-              })
-            : null}
-        </div>
-      ) : null}
     </div>
   );
 }

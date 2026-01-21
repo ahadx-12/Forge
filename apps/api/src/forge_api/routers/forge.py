@@ -13,6 +13,9 @@ from forge_api.services.forge_overlay import (
     append_overlay_patchset,
     build_overlay_state,
     load_overlay_patch_log,
+    load_overlay_custom_entries,
+    resolve_overlay_selection,
+    upsert_overlay_custom_entries,
 )
 from forge_api.services.storage import get_storage
 
@@ -70,7 +73,11 @@ def get_forge_overlay(doc_id: str, page_index: int = Query(..., ge=0)) -> dict:
             },
         ) from exc
     patchsets = load_overlay_patch_log(doc_id)
-    overlay_state = build_overlay_state(manifest, patchsets)
+    overlay_state = build_overlay_state(
+        manifest,
+        patchsets,
+        custom_entries=load_overlay_custom_entries(doc_id),
+    )
     page_overlay = overlay_state.get(page_index, {})
     page_primitives = page_overlay.get("primitives", {})
     entries = [
@@ -143,10 +150,39 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
     manifest_page = manifest_pages.get(payload.page_index)
     if manifest_page is None:
         raise HTTPException(status_code=404, detail="Page not found")
-    manifest_ids = {item.get("element_id") for item in manifest_page.get("elements", [])}
+    manifest_elements = manifest_page.get("elements", [])
+    manifest_ids = {item.get("element_id") for item in manifest_elements}
 
-    overlay_state = build_overlay_state(manifest, load_overlay_patch_log(doc_id))
+    selection_payload = [item.model_dump(mode="json") for item in payload.selection]
+    resolved = resolve_overlay_selection(selection_payload, manifest_elements)
+    custom_entries: list[dict[str, object]] = []
+    for item in selection_payload:
+        element_id = item.get("element_id")
+        if not element_id or element_id in manifest_ids:
+            continue
+        resolved_item = resolved.get(element_id)
+        base_text = (resolved_item or {}).get("text") or item.get("text", "")
+        custom_entries.append(
+            {
+                "element_id": element_id,
+                "page_index": payload.page_index,
+                "bbox": (resolved_item or {}).get("bbox") or item.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                "text": base_text,
+                "style": (resolved_item or {}).get("style") or item.get("style") or {},
+                "element_type": (resolved_item or {}).get("element_type") or item.get("element_type") or "text",
+                "resolved_element_id": (resolved_item or {}).get("element_id"),
+            }
+        )
+    if custom_entries:
+        upsert_overlay_custom_entries(doc_id, custom_entries)
+
+    overlay_state = build_overlay_state(
+        manifest,
+        load_overlay_patch_log(doc_id),
+        custom_entries=load_overlay_custom_entries(doc_id),
+    )
     page_primitives = overlay_state.get(payload.page_index, {}).get("primitives", {})
+    allowed_ids = manifest_ids | {entry["element_id"] for entry in custom_entries}
 
     for op in payload.ops:
         if op.element_id not in selection_ids:
@@ -156,7 +192,7 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
                 message="Overlay ops must target the selection",
                 details={"element_id": op.element_id},
             )
-        if op.element_id not in manifest_ids:
+        if op.element_id not in allowed_ids:
             raise APIError(
                 status_code=409,
                 code="patch_target_not_found",
@@ -174,7 +210,11 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
             )
 
     record = append_overlay_patchset(doc_id, payload.ops)
-    overlay_state = build_overlay_state(manifest, load_overlay_patch_log(doc_id))
+    overlay_state = build_overlay_state(
+        manifest,
+        load_overlay_patch_log(doc_id),
+        custom_entries=load_overlay_custom_entries(doc_id),
+    )
     page_overlay = overlay_state.get(payload.page_index, {})
     page_primitives = page_overlay.get("primitives", {})
     entries = [
