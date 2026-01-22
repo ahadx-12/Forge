@@ -200,13 +200,18 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
                 details={"element_id": op.element_id},
             )
         expected_hash = selection_hashes.get(op.element_id)
-        current_hash = page_primitives.get(op.element_id, {}).get("content_hash")
+        resolved_element_id = resolved.get(op.element_id, {}).get("element_id") or op.element_id
+        current_hash = page_primitives.get(resolved_element_id, {}).get("content_hash")
         if expected_hash and current_hash and current_hash != expected_hash:
             raise APIError(
                 status_code=409,
                 code="PATCH_CONFLICT",
                 message="Overlay target content has changed",
-                details={"element_id": op.element_id},
+                details={
+                    "element_id": op.element_id,
+                    "resolved_element_id": resolved_element_id,
+                    "current_content_hash": current_hash,
+                },
             )
 
     record = append_overlay_patchset(doc_id, payload.ops)

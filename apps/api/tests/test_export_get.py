@@ -9,4 +9,5 @@ def test_export_get_returns_pdf(client, upload_pdf):
 
     assert export.status_code == 200
     assert "application/pdf" in export.headers.get("content-type", "")
+    assert export.headers.get("content-disposition") == f'attachment; filename="{doc_id}.pdf"'
     assert export.content[:4] == b"%PDF"

@@ -68,3 +68,46 @@ def test_forge_manifest_overlay_export(client, upload_pdf):
     extracted = exported_doc[0].get_text()
     exported_doc.close()
     assert "Forge Pact" in extracted
+
+
+def test_forge_overlay_commit_conflict_payload(client, upload_pdf):
+    response = upload_pdf("contract")
+    doc_id = response.json()["document"]["doc_id"]
+
+    manifest = client.get(f"/v1/documents/{doc_id}/forge/manifest").json()
+    first_item = manifest["pages"][0]["elements"][0]
+    overlay_response = client.get(f"/v1/documents/{doc_id}/forge/overlay?page_index=0").json()
+    overlay_entry = next(
+        entry for entry in overlay_response["overlay"] if entry["element_id"] == first_item["element_id"]
+    )
+
+    commit = client.post(
+        f"/v1/documents/{doc_id}/forge/overlay/commit",
+        json={
+            "doc_id": doc_id,
+            "page_index": 0,
+            "selection": [
+                {
+                    "element_id": first_item["element_id"],
+                    "text": first_item["text"],
+                    "content_hash": "mismatch",
+                    "bbox": first_item["bbox"],
+                    "element_type": first_item["element_type"],
+                    "style": first_item["style"],
+                }
+            ],
+            "ops": [
+                {
+                    "type": "replace_element",
+                    "element_id": first_item["element_id"],
+                    "old_text": first_item["text"],
+                    "new_text": "Forge Pact",
+                }
+            ],
+        },
+    )
+    assert commit.status_code == 409
+    payload = commit.json()
+    assert payload["error"] == "PATCH_CONFLICT"
+    assert payload["details"]["resolved_element_id"] == first_item["element_id"]
+    assert payload["details"]["current_content_hash"] == overlay_entry["content_hash"]
