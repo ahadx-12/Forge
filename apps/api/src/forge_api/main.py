@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import traceback
 
 from fastapi import FastAPI, Request
@@ -50,6 +51,22 @@ def _cors_origins() -> list[str]:
 # App
 # -----------------------------------------------------------------------------
 app = FastAPI(title="Forge API", version="1.0.0")
+
+
+@app.on_event("startup")
+def assert_playwright_chromium_installed() -> None:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # pragma: no cover - dependency import logging
+        logger.error("Playwright import failed: %s", exc)
+        return
+    with sync_playwright() as playwright:
+        executable_path = playwright.chromium.executable_path
+    if not os.path.exists(executable_path):
+        logger.error(
+            "Playwright chromium executable missing at %s. Run `playwright install --with-deps chromium`.",
+            executable_path,
+        )
 
 app.add_middleware(
     CORSMiddleware,

@@ -27,7 +27,7 @@ def _load_filename(doc_id: str) -> str:
     return f"{doc_id}.pdf"
 
 
-def _build_response(doc_id: str, mask_mode: str | None) -> Response:
+def _build_response(doc_id: str, mask_mode: str | None, disposition: str) -> Response:
     try:
         settings = get_settings()
         mode = (mask_mode or settings.FORGE_EXPORT_MASK_MODE).upper()
@@ -39,7 +39,7 @@ def _build_response(doc_id: str, mask_mode: str | None) -> Response:
     headers = {"X-Forge-Mask-Mode": result.mask_mode}
     if result.warning:
         headers["X-Forge-Mask-Warning"] = result.warning
-    headers["Content-Disposition"] = f'inline; filename="{_load_filename(doc_id)}"'
+    headers["Content-Disposition"] = disposition
     return StreamingResponse(BytesIO(result.payload), media_type="application/pdf", headers=headers)
 
 
@@ -48,7 +48,8 @@ def export_pdf(
     doc_id: str,
     mask_mode: str | None = Query(default=None, description="SOLID or AUTO_BG"),
 ) -> Response:
-    return _build_response(doc_id, mask_mode)
+    filename = _load_filename(doc_id)
+    return _build_response(doc_id, mask_mode, f'inline; filename="{filename}"')
 
 
 @router.get("/export/{doc_id}")
@@ -56,4 +57,4 @@ def export_pdf_get(
     doc_id: str,
     mask_mode: str | None = Query(default=None, description="SOLID or AUTO_BG"),
 ) -> Response:
-    return _build_response(doc_id, mask_mode)
+    return _build_response(doc_id, mask_mode, f'attachment; filename="{doc_id}.pdf"')

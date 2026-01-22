@@ -308,34 +308,58 @@ export class ApiError extends Error {
   status: number;
   code: string | null;
   requestId: string | null;
+  details: Record<string, unknown> | null;
 
-  constructor(message: string, status: number, code: string | null, requestId: string | null) {
+  constructor(
+    message: string,
+    status: number,
+    code: string | null,
+    requestId: string | null,
+    details: Record<string, unknown> | null
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.details = details;
   }
 }
 
-async function readErrorDetail(
-  response: Response
-): Promise<{ message: string | null; code: string | null; request_id: string | null }> {
+type ApiErrorDetail = {
+  message: string | null;
+  code: string | null;
+  request_id: string | null;
+  details: Record<string, unknown> | null;
+};
+
+async function readErrorDetail(response: Response): Promise<ApiErrorDetail> {
   try {
     const payload = await response.json();
+    const details = payload && typeof payload.details === "object" ? (payload.details as Record<string, unknown>) : null;
     if (payload && typeof payload.detail === "string") {
-      return { message: payload.detail, code: payload.error ?? null, request_id: payload.request_id ?? null };
+      return {
+        message: payload.detail,
+        code: payload.error ?? null,
+        request_id: payload.request_id ?? null,
+        details
+      };
     }
     if (payload && typeof payload.message === "string") {
-      return { message: payload.message, code: payload.error ?? null, request_id: payload.request_id ?? null };
+      return {
+        message: payload.message,
+        code: payload.error ?? null,
+        request_id: payload.request_id ?? null,
+        details
+      };
     }
     if (payload && typeof payload.error === "string") {
-      return { message: payload.error, code: payload.error, request_id: payload.request_id ?? null };
+      return { message: payload.error, code: payload.error, request_id: payload.request_id ?? null, details };
     }
   } catch (error) {
-    return { message: null, code: null, request_id: null };
+    return { message: null, code: null, request_id: null, details: null };
   }
-  return { message: null, code: null, request_id: null };
+  return { message: null, code: null, request_id: null, details: null };
 }
 
 export function apiUrl(path: string): string {
@@ -450,7 +474,8 @@ export async function commitOverlayPatch(
       detail.message ? `Overlay commit failed (${suffix}): ${detail.message}` : `Overlay commit failed (${suffix})`,
       response.status,
       detail.code,
-      detail.request_id
+      detail.request_id,
+      detail.details
     );
   }
   return (await response.json()) as ForgeOverlayCommitResponse;
