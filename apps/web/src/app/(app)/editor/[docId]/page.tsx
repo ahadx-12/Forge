@@ -7,6 +7,7 @@ import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 
 import {
+  ApiError,
   apiUrl,
   commitOverlayPatch,
   exportPdfUrl,
@@ -17,6 +18,7 @@ import {
   planOverlayPatch,
   type ExportMaskMode,
   type ForgeManifest,
+  type ForgeOverlayCommitResponse,
   type ForgeManifestElement,
   type ForgeOverlayEntry,
   type ForgeOverlayMask,
@@ -32,6 +34,7 @@ type SelectedOverlay = {
   text: string;
   bbox: number[];
   content_hash: string;
+  base_content_hash: string;
   element_type: ForgeManifestElement["element_type"];
   style?: ForgeManifestElement["style"];
 };
@@ -44,14 +47,6 @@ type OverlayPageState = {
 };
 
 const EMPTY_OVERLAY: Record<number, OverlayPageState> = {};
-
-const computeContentHash = async (text: string): Promise<string> => {
-  const data = new TextEncoder().encode(text);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-};
 
 export default function EditorPage() {
   const params = useParams<{ docId: string }>();
@@ -220,6 +215,24 @@ export default function EditorPage() {
     return `${(kb / 1024).toFixed(1)} MB`;
   }, [sizeBytes]);
 
+  const refreshOverlayPage = async (pageIndex: number) => {
+    const response = await getForgeOverlay(docId, pageIndex);
+    const nextEntries = response.overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
+      acc[entry.element_id] = entry;
+      return acc;
+    }, {});
+    setOverlayByPage((prev) => ({
+      ...prev,
+      [pageIndex]: {
+        entries: nextEntries,
+        masks: response.masks,
+        pageImageWidthPx: response.page_image_width_px,
+        pageImageHeightPx: response.page_image_height_px
+      }
+    }));
+    return { entries: nextEntries, masks: response.masks };
+  };
+
   useEffect(() => {
     if (!activePage) {
       return;
@@ -239,28 +252,18 @@ export default function EditorPage() {
   const handleSelect = (pageIndex: number, item: PdfJsSelectionItem, overlayEntry?: ForgeOverlayEntry) => {
     setActivePage(pageIndex + 1);
     const displayText = overlayEntry?.text ?? item.text;
+    const contentHash = overlayEntry?.content_hash ?? item.content_hash;
     const nextSelection: SelectedOverlay = {
       page_index: pageIndex,
       element_id: item.element_id,
       text: displayText,
       bbox: item.bbox,
-      content_hash: overlayEntry?.content_hash ?? "",
+      content_hash: contentHash,
+      base_content_hash: item.content_hash,
       element_type: item.element_type ?? "text",
       style: item.style
     };
     setSelectedOverlay(nextSelection);
-    if (!overlayEntry?.content_hash) {
-      void computeContentHash(displayText).then((hash) => {
-        setSelectedOverlay((current) =>
-          current && current.element_id === nextSelection.element_id
-            ? {
-                ...current,
-                content_hash: hash
-              }
-            : current
-        );
-      });
-    }
     setPlan(null);
     setPlanError(null);
     setApplyError(null);
@@ -313,12 +316,47 @@ export default function EditorPage() {
     setIsApplying(true);
     setApplyError(null);
     try {
-      const response = await commitOverlayPatch(docId, {
-        doc_id: docId,
-        page_index: selectedOverlay.page_index,
-        selection: selectionSnapshot,
-        ops: plan.ops
-      });
+      const commitWithContentHash = async (
+        contentHash: string,
+        attempt: number
+      ): Promise<ForgeOverlayCommitResponse> => {
+        const selection = selectionSnapshot.map((item) => ({
+          ...item,
+          content_hash: contentHash
+        }));
+        try {
+          return await commitOverlayPatch(docId, {
+            doc_id: docId,
+            page_index: selectedOverlay.page_index,
+            selection,
+            ops: plan.ops
+          });
+        } catch (err) {
+          if (
+            attempt === 0 &&
+            err instanceof ApiError &&
+            err.status === 409 &&
+            err.code === "PATCH_CONFLICT"
+          ) {
+            const refreshed = await refreshOverlayPage(selectedOverlay.page_index);
+            const refreshedEntry = refreshed.entries[selectedOverlay.element_id];
+            const nextHash = refreshedEntry?.content_hash ?? selectedOverlay.base_content_hash;
+            setSelectedOverlay((current) =>
+              current && current.element_id === selectedOverlay.element_id
+                ? {
+                    ...current,
+                    text: refreshedEntry?.text ?? current.text,
+                    content_hash: nextHash
+                  }
+                : current
+            );
+            return commitWithContentHash(nextHash, attempt + 1);
+          }
+          throw err;
+        }
+      };
+
+      const response = await commitWithContentHash(selectedOverlay.content_hash, 0);
       setOverlayByPage((prev) => ({
         ...prev,
         [selectedOverlay.page_index]: {
