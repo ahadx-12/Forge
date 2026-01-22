@@ -304,6 +304,20 @@ const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE = (RAW_API_BASE && RAW_API_BASE.trim().length > 0 ? RAW_API_BASE : "http://localhost:8000")
   .replace(/\/+$/, "");
 
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+  requestId: string | null;
+
+  constructor(message: string, status: number, code: string | null, requestId: string | null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.requestId = requestId;
+  }
+}
+
 async function readErrorDetail(
   response: Response
 ): Promise<{ message: string | null; code: string | null; request_id: string | null }> {
@@ -432,8 +446,11 @@ export async function commitOverlayPatch(
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     const suffix = [response.status, detail.code].filter(Boolean).join(" ");
-    throw new Error(
-      detail.message ? `Overlay commit failed (${suffix}): ${detail.message}` : `Overlay commit failed (${suffix})`
+    throw new ApiError(
+      detail.message ? `Overlay commit failed (${suffix}): ${detail.message}` : `Overlay commit failed (${suffix})`,
+      response.status,
+      detail.code,
+      detail.request_id
     );
   }
   return (await response.json()) as ForgeOverlayCommitResponse;
