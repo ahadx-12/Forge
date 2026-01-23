@@ -10,11 +10,14 @@ import {
   apiUrl,
   commitOverlayPatch,
   exportPdfUrl,
+  getDecodedDocument,
   getDocumentFile,
   getDocumentMeta,
   getForgeManifest,
   getForgeOverlay,
   planOverlayPatch,
+  type DecodedDocumentV1,
+  type DecodedElementV1,
   type ExportMaskMode,
   type ForgeManifest,
   type ForgeManifestElement,
@@ -23,20 +26,32 @@ import {
   type ForgeOverlayPlanResponse,
   type ForgeOverlaySelection
 } from "@/lib/api";
-import { PdfJsPage, type PdfJsSelectionItem } from "@/components/editor/PdfJsPage";
+import { PdfJsPage } from "@/components/editor/PdfJsPage";
 import { commitOverlayWithRetry } from "@/lib/overlay-commit";
 import { getPdfWorkerSrc } from "@/lib/pdfjs";
+import { area, pickDecodedElementsInRegion, type BBox } from "@/components/editor/decodedHitTest";
 
-type SelectedOverlay = {
+type DecodedSelection = {
   page_index: number;
-  element_id: string;
-  text: string;
-  bbox: number[];
-  content_hash: string;
-  base_content_hash: string;
-  element_type: ForgeManifestElement["element_type"];
-  style?: ForgeManifestElement["style"];
+  region_bbox_norm: BBox;
+  elements: DecodedElementV1[];
+  primary_id: string | null;
 };
+
+const toDecodedStyle = (element: DecodedElementV1) =>
+  element.style ?? {
+    font_name: element.font_name ?? null,
+    font_size_pt: element.font_size_pt ?? null,
+    color: element.color ?? null
+  };
+
+const toOverlayStyle = (element: DecodedElementV1): ForgeManifestElement["style"] => ({
+  font_size_pt: element.font_size_pt ?? 12,
+  is_bold: false,
+  is_italic: false,
+  color: element.color ?? "#000",
+  font_family: element.font_name ?? "Helvetica"
+});
 
 type OverlayPageState = {
   entries: Record<string, ForgeOverlayEntry>;
@@ -55,13 +70,15 @@ export default function EditorPage() {
   const [sizeBytes, setSizeBytes] = useState(0);
   const [activePage, setActivePage] = useState(1);
   const [manifest, setManifest] = useState<ForgeManifest | null>(null);
+  const [decodedDoc, setDecodedDoc] = useState<DecodedDocumentV1 | null>(null);
+  const [decodedError, setDecodedError] = useState<string | null>(null);
   const [overlayByPage, setOverlayByPage] = useState<Record<number, OverlayPageState>>(
     EMPTY_OVERLAY
   );
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
-  const [selectedOverlay, setSelectedOverlay] = useState<SelectedOverlay | null>(null);
+  const [decodedSelection, setDecodedSelection] = useState<DecodedSelection | null>(null);
   const [plan, setPlan] = useState<ForgeOverlayPlanResponse | null>(null);
   const [prompt, setPrompt] = useState("");
   const [planError, setPlanError] = useState<string | null>(null);
@@ -136,7 +153,7 @@ export default function EditorPage() {
         setPageCount(manifestPayload.page_count);
         setManifest(manifestPayload);
         setActivePage(1);
-        setSelectedOverlay(null);
+        setDecodedSelection(null);
       } catch (err) {
         if (!cancelled) {
           const message =
@@ -149,6 +166,32 @@ export default function EditorPage() {
     }
 
     load();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDecoded() {
+      setDecodedDoc(null);
+      setDecodedError(null);
+      try {
+        const decoded = await getDecodedDocument(docId);
+        if (!cancelled) {
+          setDecodedDoc(decoded);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : "We could not load the decoded document data.";
+          setDecodedError(message);
+        }
+      }
+    }
+    void loadDecoded();
     return () => {
       cancelled = true;
     };
@@ -248,41 +291,73 @@ export default function EditorPage() {
     window.open(exportPdfUrl(docId, maskMode), "_blank", "noopener,noreferrer");
   };
 
-  const handleSelect = (pageIndex: number, item: PdfJsSelectionItem, overlayEntry?: ForgeOverlayEntry) => {
+  const handleRegionSelect = (pageIndex: number, bboxNorm: BBox) => {
     setActivePage(pageIndex + 1);
-    const displayText = overlayEntry?.text ?? item.text;
-    const contentHash = overlayEntry?.content_hash ?? item.content_hash;
-    const nextSelection: SelectedOverlay = {
+    if (!decodedDoc) {
+      setPlanError("Decoded document data is still loading.");
+      return;
+    }
+    const decodedPage = decodedDoc.pages.find((page) => page.page_index === pageIndex);
+    if (!decodedPage) {
+      setPlanError("Decoded page data not found.");
+      return;
+    }
+    const selected = pickDecodedElementsInRegion(decodedPage.elements, bboxNorm);
+    if (!selected.length) {
+      setPlanError("No decoded text found in the selection.");
+      return;
+    }
+    const primary = selected.reduce<{ id: string; size: number } | null>((best, element) => {
+      const elementArea = area(element.bbox_norm);
+      if (!best || elementArea < best.size) {
+        return { id: element.id, size: elementArea };
+      }
+      return best;
+    }, null);
+    const nextSelection: DecodedSelection = {
       page_index: pageIndex,
-      element_id: item.element_id,
-      text: displayText,
-      bbox: item.bbox,
-      content_hash: contentHash,
-      base_content_hash: item.content_hash,
-      element_type: item.element_type ?? "text",
-      style: item.style
+      region_bbox_norm: bboxNorm,
+      elements: selected,
+      primary_id: primary?.id ?? null
     };
-    setSelectedOverlay(nextSelection);
+    setDecodedSelection(nextSelection);
     setPlan(null);
     setPlanError(null);
     setApplyError(null);
   };
 
-  const selectionSnapshot: ForgeOverlaySelection[] | null = selectedOverlay
-    ? [
-        {
-          element_id: selectedOverlay.element_id,
-          text: selectedOverlay.text,
-          content_hash: selectedOverlay.content_hash,
-          bbox: selectedOverlay.bbox,
-          element_type: selectedOverlay.element_type,
-          style: selectedOverlay.style
-        }
-      ]
+  const selectionSnapshot: ForgeOverlaySelection[] | null = decodedSelection
+    ? decodedSelection.elements.slice(0, 20).map((element) => ({
+        element_id: element.id,
+        text: element.text ?? "",
+        content_hash: element.content_hash ?? "",
+        bbox: element.bbox_norm,
+        element_type: "text",
+        style: toOverlayStyle(element)
+      }))
     : null;
 
+  const decodedSelectionPayload = decodedSelection
+    ? {
+        page_index: decodedSelection.page_index,
+        region_bbox_norm: decodedSelection.region_bbox_norm,
+        primary_id: decodedSelection.primary_id,
+        elements: decodedSelection.elements.slice(0, 20).map((element) => ({
+          id: element.id,
+          kind: element.kind,
+          bbox_norm: element.bbox_norm,
+          text: element.text ?? undefined,
+          font_name: element.font_name ?? undefined,
+          font_size_pt: element.font_size_pt ?? undefined,
+          color: element.color ?? undefined,
+          style: toDecodedStyle(element),
+          content_hash: element.content_hash ?? undefined
+        }))
+      }
+    : undefined;
+
   const handlePlan = async () => {
-    if (!selectedOverlay || !selectionSnapshot) {
+    if (!decodedSelection || !selectionSnapshot) {
       setPlanError("Select a text element first.");
       return;
     }
@@ -295,9 +370,10 @@ export default function EditorPage() {
     try {
       const response = await planOverlayPatch({
         doc_id: docId,
-        page_index: selectedOverlay.page_index,
+        page_index: decodedSelection.page_index,
         selection: selectionSnapshot,
-        user_prompt: prompt.trim()
+        user_prompt: prompt.trim(),
+        decoded_selection: decodedSelectionPayload
       });
       setPlan(response);
     } catch (err) {
@@ -308,7 +384,7 @@ export default function EditorPage() {
   };
 
   const handleApply = async () => {
-    if (!selectedOverlay || !selectionSnapshot || !plan) {
+    if (!decodedSelection || !selectionSnapshot || !plan) {
       setApplyError("No overlay plan to apply.");
       return;
     }
@@ -317,37 +393,41 @@ export default function EditorPage() {
     try {
       const { response, selection } = await commitOverlayWithRetry({
         docId,
-        pageIndex: selectedOverlay.page_index,
+        pageIndex: decodedSelection.page_index,
         selection: selectionSnapshot,
         ops: plan.ops,
         commitOverlayPatch,
-        fetchOverlay: async (_docId, pageIndex) => refreshOverlayPage(pageIndex)
+        fetchOverlay: async (_docId, pageIndex) => refreshOverlayPage(pageIndex),
+        decodedSelection: decodedSelectionPayload,
+        fetchDecoded: async (_docId) => getDecodedDocument(_docId)
       });
       setOverlayByPage((prev) => ({
         ...prev,
-        [selectedOverlay.page_index]: {
+        [decodedSelection.page_index]: {
           entries: response.overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
             acc[entry.element_id] = entry;
             return acc;
           }, {}),
           masks: response.masks,
-          pageImageWidthPx: prev[selectedOverlay.page_index]?.pageImageWidthPx,
-          pageImageHeightPx: prev[selectedOverlay.page_index]?.pageImageHeightPx
+          pageImageWidthPx: prev[decodedSelection.page_index]?.pageImageWidthPx,
+          pageImageHeightPx: prev[decodedSelection.page_index]?.pageImageHeightPx
         }
       }));
       const committedSelection = selection[0];
       const updatedEntry = committedSelection
         ? response.overlay.find((entry) => entry.element_id === committedSelection.element_id)
         : undefined;
-      if (committedSelection && updatedEntry) {
-        setSelectedOverlay((current) =>
+      if (decodedSelection && committedSelection && updatedEntry) {
+        setDecodedSelection((current) =>
           current
             ? {
                 ...current,
-                element_id: committedSelection.element_id,
-                text: updatedEntry.text,
-                content_hash: updatedEntry.content_hash,
-                base_content_hash: updatedEntry.content_hash
+                primary_id: committedSelection.element_id,
+                elements: current.elements.map((element) =>
+                  element.id === committedSelection.element_id
+                    ? { ...element, text: updatedEntry.text, content_hash: updatedEntry.content_hash }
+                    : element
+                )
               }
             : current
         );
@@ -394,6 +474,7 @@ export default function EditorPage() {
                       type="button"
                       onClick={() => setActivePage(pageNumber)}
                     >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={apiUrl(page.image_path)}
                         alt={`Page ${pageNumber}`}
@@ -416,7 +497,7 @@ export default function EditorPage() {
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-forge-border bg-forge-card/70 px-4 py-3">
             <div>
               <div className="text-sm text-slate-300">Overlay editor</div>
-              <div className="text-xs text-slate-500">Click text to edit</div>
+              <div className="text-xs text-slate-500">Drag to select text</div>
             </div>
             <button
               type="button"
@@ -438,6 +519,10 @@ export default function EditorPage() {
               <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
                 {pdfError}
               </div>
+            ) : decodedError ? (
+              <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-4 text-sm text-yellow-200">
+                {decodedError}
+              </div>
             ) : !pdfDocument ? (
               <div className="text-sm text-slate-400">Loading PDF…</div>
             ) : (
@@ -454,11 +539,14 @@ export default function EditorPage() {
                       pageIndex={page.page_index}
                       overlayEntries={overlayState?.entries}
                       overlayMasks={overlayState?.masks}
-                      selectedElementId={selectedOverlay?.element_id}
-                      showDebugOverlay={showDebugOverlay}
-                      onSelect={(item, overlayEntry) =>
-                        handleSelect(page.page_index, item, overlayEntry)
+                      decodedPage={decodedDoc?.pages.find((item) => item.page_index === page.page_index) ?? null}
+                      selectedDecodedIds={
+                        decodedSelection?.page_index === page.page_index
+                          ? decodedSelection.elements.map((element) => element.id)
+                          : []
                       }
+                      showDebugOverlay={showDebugOverlay}
+                      onRegionSelect={handleRegionSelect}
                     />
                   </div>
                 );
@@ -470,20 +558,23 @@ export default function EditorPage() {
         <div className="flex flex-col gap-4">
           <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-4">
             <h3 className="text-sm font-semibold text-slate-200">Inspector</h3>
-            {selectedOverlay ? (
+            {decodedSelection ? (
               <div className="mt-3 space-y-2 text-xs text-slate-300">
                 <p>
-                  <span className="text-slate-400">Element ID:</span> {selectedOverlay.element_id}
+                  <span className="text-slate-400">Element ID:</span>{" "}
+                  {decodedSelection.primary_id ?? "—"}
                 </p>
                 <p>
-                  <span className="text-slate-400">Page:</span> {selectedOverlay.page_index + 1}
+                  <span className="text-slate-400">Page:</span> {decodedSelection.page_index + 1}
                 </p>
                 <p>
-                  <span className="text-slate-400">Text:</span> {selectedOverlay.text}
+                  <span className="text-slate-400">Text:</span>{" "}
+                  {decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id)?.text ??
+                    "—"}
                 </p>
                 <p>
                   <span className="text-slate-400">BBox:</span>{" "}
-                  {selectedOverlay.bbox.map((value) => value.toFixed(2)).join(", ")}
+                  {decodedSelection.region_bbox_norm.map((value) => value.toFixed(2)).join(", ")}
                 </p>
               </div>
             ) : (

@@ -16,6 +16,7 @@ def test_decoded_endpoint_returns_payload(client: TestClient, upload_pdf) -> Non
     assert payload["version"] == "v1"
     assert payload["type"] == "pdf"
     assert payload["page_count"] == len(payload["pages"])
+    assert payload["pages"][0]["elements"][0]["content_hash"]
 
     cached = client.get(f"/v1/documents/{doc_id}/decoded?v=1")
     assert cached.status_code == 200

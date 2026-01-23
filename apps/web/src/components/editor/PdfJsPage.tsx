@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GlobalWorkerOptions, Util } from "pdfjs-dist";
 import type { PDFDocumentProxy, TextItem } from "pdfjs-dist/types/src/display/api";
 
-import type { ForgeManifestElement, ForgeOverlayEntry, ForgeOverlayMask } from "@/lib/api";
+import type { DecodedPageV1, ForgeManifestElement, ForgeOverlayEntry, ForgeOverlayMask } from "@/lib/api";
 import { getPdfWorkerSrc } from "@/lib/pdfjs";
 import { normalizedToPixelRect } from "@/components/editor/pageCanvas";
+import { RegionSelectLayer } from "@/components/editor/RegionSelectLayer";
 import {
   buildContentHash,
   buildElementId,
-  hitTestSmallest,
   normalizeBbox,
   type PdfJsNormalizedBbox,
   type PdfJsRect,
@@ -31,19 +31,15 @@ type PdfJsTextItem = {
   style?: ForgeManifestElement["style"];
 };
 
-export type PdfJsSelectionItem = Pick<
-  PdfJsTextItem,
-  "element_id" | "text" | "bbox" | "element_type" | "style" | "content_hash"
->;
-
 type PdfJsPageProps = {
   pdfDocument: PDFDocumentProxy;
   pageIndex: number;
   overlayEntries?: Record<string, ForgeOverlayEntry>;
   overlayMasks?: ForgeOverlayMask[];
-  selectedElementId?: string | null;
   showDebugOverlay?: boolean;
-  onSelect: (item: PdfJsSelectionItem, overlayEntry?: ForgeOverlayEntry) => void;
+  decodedPage?: DecodedPageV1 | null;
+  selectedDecodedIds?: string[];
+  onRegionSelect?: (pageIndex: number, bbox: [number, number, number, number]) => void;
 };
 
 const toTextItem = (item: unknown): item is TextItem =>
@@ -77,16 +73,15 @@ function computeTextRect(item: TextItem, viewport: { transform: number[] }): Pdf
   };
 }
 
-const HIT_SLOP_PX = 3;
-
 export function PdfJsPage({
   pdfDocument,
   pageIndex,
   overlayEntries,
   overlayMasks,
-  selectedElementId,
   showDebugOverlay,
-  onSelect
+  decodedPage,
+  selectedDecodedIds,
+  onRegionSelect
 }: PdfJsPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -226,22 +221,7 @@ export function PdfJsPage({
     return map;
   }, [textItems]);
 
-  const handleClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (!textItems.length || !viewportSize.width || !viewportSize.height) {
-      return;
-    }
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / bounds.width;
-    const y = (event.clientY - bounds.top) / bounds.height;
-    const slopX = HIT_SLOP_PX / viewportSize.width;
-    const slopY = HIT_SLOP_PX / viewportSize.height;
-    const hitIndex = hitTestSmallest(textItems, { x, y }, { x: slopX, y: slopY });
-    if (hitIndex === null) {
-      return;
-    }
-    const item = textItems[hitIndex];
-    onSelect(item, overlayEntriesMap[item.element_id]);
-  };
+  const selectedDecodedSet = useMemo(() => new Set(selectedDecodedIds ?? []), [selectedDecodedIds]);
 
   return (
     <div ref={containerRef} className="w-full" data-page-index={pageIndex}>
@@ -255,6 +235,26 @@ export function PdfJsPage({
         <canvas ref={canvasRef} className="block" />
 
         <div className="absolute inset-0 pointer-events-none">
+          {decodedPage
+            ? decodedPage.elements.map((element) => {
+                if (!selectedDecodedSet.has(element.id)) {
+                  return null;
+                }
+                const rect = normalizedToPixelRect(element.bbox_norm, viewportSize);
+                return (
+                  <div
+                    key={`decoded_${element.id}`}
+                    className="absolute rounded-md ring-2 ring-blue-500/80 bg-blue-500/10"
+                    style={{
+                      left: rect.left,
+                      top: rect.top,
+                      width: rect.width,
+                      height: rect.height
+                    }}
+                  />
+                );
+              })
+            : null}
           {Array.from(masksById.values()).map((mask) => {
             const rect = normalizedToPixelRect(mask.bbox as [number, number, number, number], viewportSize);
             return (
@@ -304,38 +304,31 @@ export function PdfJsPage({
           })}
         </div>
 
-        <div className="absolute inset-0 cursor-pointer" onClick={handleClick}>
-          {textItems.map((item) => {
-            const isSelected = selectedElementId === item.element_id;
-            return (
-              <div
-                key={item.element_id}
-                className={`absolute pointer-events-none transition-all duration-150 ${
-                  isSelected
-                    ? "ring-2 ring-blue-500 bg-blue-500/10 z-20"
-                    : "hover:ring-1 hover:ring-blue-300/50 hover:bg-blue-300/5"
-                }`}
+        <div className="absolute inset-0 pointer-events-none">
+          {textItems.map((item) => (
+            <div
+              key={item.element_id}
+              className="absolute pointer-events-none transition-all duration-150 hover:ring-1 hover:ring-blue-300/50 hover:bg-blue-300/5"
+              style={{
+                left: item.rect.left,
+                top: item.rect.top,
+                width: item.rect.width,
+                height: item.rect.height
+              }}
+            >
+              <span
                 style={{
-                  left: item.rect.left,
-                  top: item.rect.top,
-                  width: item.rect.width,
-                  height: item.rect.height
+                  color: "transparent",
+                  fontSize: item.fontSizePx,
+                  fontFamily: item.fontFamily,
+                  lineHeight: 1,
+                  userSelect: "text"
                 }}
               >
-                <span
-                  style={{
-                    color: "transparent",
-                    fontSize: item.fontSizePx,
-                    fontFamily: item.fontFamily,
-                    lineHeight: 1,
-                    userSelect: "text"
-                  }}
-                >
-                  {item.text}
-                </span>
-              </div>
-            );
-          })}
+                {item.text}
+              </span>
+            </div>
+          ))}
 
           {showDebugOverlay
             ? textItems.slice(0, DEBUG_OVERLAY_LIMIT).map((item) => (
@@ -356,6 +349,14 @@ export function PdfJsPage({
               ))
             : null}
         </div>
+
+        {onRegionSelect && viewportSize.width && viewportSize.height ? (
+          <RegionSelectLayer
+            width={viewportSize.width}
+            height={viewportSize.height}
+            onSelect={(bbox) => onRegionSelect(pageIndex, bbox)}
+          />
+        ) : null}
       </div>
     </div>
   );

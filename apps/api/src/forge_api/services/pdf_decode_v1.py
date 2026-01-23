@@ -13,7 +13,7 @@ from forge_api.schemas.decoded import (
     PathElement,
     TextRunElement,
 )
-from forge_api.services.decoded_hash import stable_element_id
+from forge_api.services.decoded_hash import stable_content_hash, stable_element_id
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +157,14 @@ def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocu
                             bbox_norm,
                             payload_core,
                         )
+                        content_hash = stable_content_hash("text_run", bbox_norm, payload_core)
                         elements.append(
                             TextRunElement(
                                 id=element_id,
                                 kind="text_run",
                                 bbox_norm=bbox_norm,
                                 source="pdf",
+                                content_hash=content_hash,
                                 text=text,
                                 font_name=font_name,
                                 font_size_pt=font_size_pt,
@@ -199,12 +201,14 @@ def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocu
                     bbox_norm,
                     payload_core,
                 )
+                content_hash = stable_content_hash("path", bbox_norm, payload_core)
                 elements.append(
                     PathElement(
                         id=element_id,
                         kind="path",
                         bbox_norm=bbox_norm,
                         source="pdf",
+                        content_hash=content_hash,
                         stroke_color=stroke_color,
                         stroke_width_pt=float(stroke_width_pt) if stroke_width_pt is not None else None,
                         fill_color=fill_color,
@@ -238,12 +242,14 @@ def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocu
                         bbox_norm,
                         payload_core,
                     )
+                    content_hash = stable_content_hash("image", bbox_norm, payload_core)
                     elements.append(
                         ImageElement(
                             id=element_id,
                             kind="image",
                             bbox_norm=bbox_norm,
                             source="pdf",
+                            content_hash=content_hash,
                             name=name,
                             width_pt=float(rect.width),
                             height_pt=float(rect.height),

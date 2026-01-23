@@ -9,6 +9,7 @@ def test_decoded_schema_clamps_bbox() -> None:
         kind="text_run",
         bbox_norm=(-0.5, 1.2, 0.2, 0.1),
         source="pdf",
+        content_hash="hash",
         text="Sample",
     )
 
