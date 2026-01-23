@@ -30,6 +30,8 @@ import { PdfJsPage } from "@/components/editor/PdfJsPage";
 import { commitOverlayWithRetry } from "@/lib/overlay-commit";
 import { getPdfWorkerSrc } from "@/lib/pdfjs";
 import { area, pickDecodedElementsInRegion, type BBox } from "@/components/editor/decodedHitTest";
+import { isPdfFontAvailable, type PdfJsFontMap } from "@/components/editor/pdfTextRender";
+import { buildUpdateStyleOp } from "@/components/editor/overlayStyle";
 
 type DecodedSelection = {
   page_index: number;
@@ -41,17 +43,35 @@ type DecodedSelection = {
 const toDecodedStyle = (element: DecodedElementV1) =>
   element.style ?? {
     font_name: element.font_name ?? null,
+    pdf_font_name: element.pdf_font_name ?? null,
     font_size_pt: element.font_size_pt ?? null,
-    color: element.color ?? null
+    color: element.color ?? null,
+    stroke_color: element.stroke_color ?? null,
+    stroke_width_pt: element.stroke_width_pt ?? null,
+    fill_color: element.fill_color ?? null
   };
 
-const toOverlayStyle = (element: DecodedElementV1): ForgeManifestElement["style"] => ({
-  font_size_pt: element.font_size_pt ?? 12,
-  is_bold: false,
-  is_italic: false,
-  color: element.color ?? "#000",
-  font_family: element.font_name ?? "Helvetica"
-});
+const toOverlayStyle = (element: DecodedElementV1): ForgeManifestElement["style"] => {
+  if (element.kind === "path") {
+    return {
+      font_size_pt: 12,
+      is_bold: false,
+      is_italic: false,
+      color: element.color ?? "#000",
+      font_family: element.font_name ?? "Helvetica",
+      stroke_color: element.stroke_color ?? "#000000",
+      stroke_width_pt: element.stroke_width_pt ?? 1,
+      fill_color: element.fill_color ?? undefined
+    };
+  }
+  return {
+    font_size_pt: element.font_size_pt ?? 12,
+    is_bold: false,
+    is_italic: false,
+    color: element.color ?? "#000",
+    font_family: element.font_name ?? "Helvetica"
+  };
+};
 
 type OverlayPageState = {
   entries: Record<string, ForgeOverlayEntry>;
@@ -88,6 +108,10 @@ export default function EditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [maskMode, setMaskMode] = useState<ExportMaskMode>("AUTO_BG");
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
+  const [pdfFontMaps, setPdfFontMaps] = useState<Record<number, PdfJsFontMap>>({});
+  const [pathStrokeColor, setPathStrokeColor] = useState("#000000");
+  const [pathFillColor, setPathFillColor] = useState<string | null>(null);
+  const [pathStrokeWidth, setPathStrokeWidth] = useState(1);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -138,6 +162,19 @@ export default function EditorPage() {
       pdfDocRef.current = null;
     };
   }, [docId]);
+
+  useEffect(() => {
+    if (!decodedSelection) {
+      return;
+    }
+    const primary = decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id);
+    if (primary?.kind !== "path") {
+      return;
+    }
+    setPathStrokeColor(primary.stroke_color ?? "#000000");
+    setPathFillColor(primary.fill_color ?? null);
+    setPathStrokeWidth(primary.stroke_width_pt ?? 1);
+  }, [decodedSelection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -283,10 +320,6 @@ export default function EditorPage() {
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [activePage]);
 
-  if (error) {
-    return <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-6">{error}</div>;
-  }
-
   const handleExport = () => {
     window.open(exportPdfUrl(docId, maskMode), "_blank", "noopener,noreferrer");
   };
@@ -304,7 +337,7 @@ export default function EditorPage() {
     }
     const selected = pickDecodedElementsInRegion(decodedPage.elements, bboxNorm);
     if (!selected.length) {
-      setPlanError("No decoded text found in the selection.");
+      setPlanError("No decoded elements found in the selection.");
       return;
     }
     const primary = selected.reduce<{ id: string; size: number } | null>((best, element) => {
@@ -332,7 +365,7 @@ export default function EditorPage() {
         text: element.text ?? "",
         content_hash: element.content_hash ?? "",
         bbox: element.bbox_norm,
-        element_type: "text",
+        element_type: element.kind === "path" ? "path" : "text",
         style: toOverlayStyle(element)
       }))
     : null;
@@ -348,17 +381,43 @@ export default function EditorPage() {
           bbox_norm: element.bbox_norm,
           text: element.text ?? undefined,
           font_name: element.font_name ?? undefined,
+          pdf_font_name: element.pdf_font_name ?? undefined,
           font_size_pt: element.font_size_pt ?? undefined,
           color: element.color ?? undefined,
+          stroke_color: element.stroke_color ?? undefined,
+          stroke_width_pt: element.stroke_width_pt ?? undefined,
+          fill_color: element.fill_color ?? undefined,
+          path_hint: element.path_hint ?? undefined,
+          commands: element.commands ?? undefined,
+          is_closed: element.is_closed ?? undefined,
           style: toDecodedStyle(element),
           content_hash: element.content_hash ?? undefined
         }))
       }
     : undefined;
 
+  const fontWarning = useMemo(() => {
+    if (!decodedSelection) {
+      return null;
+    }
+    const primary = decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id);
+    if (!primary?.pdf_font_name) {
+      return null;
+    }
+    const fontMap = pdfFontMaps[decodedSelection.page_index] ?? {};
+    return isPdfFontAvailable(primary.pdf_font_name, fontMap)
+      ? null
+      : "Font fallback; export may differ.";
+  }, [decodedSelection, pdfFontMaps]);
+
   const handlePlan = async () => {
     if (!decodedSelection || !selectionSnapshot) {
-      setPlanError("Select a text element first.");
+      setPlanError("Select an element first.");
+      return;
+    }
+    const primary = decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id);
+    if (primary?.kind === "path") {
+      setPlanError("Path elements use the style controls instead of plan patch.");
       return;
     }
     if (!prompt.trim()) {
@@ -441,6 +500,81 @@ export default function EditorPage() {
     }
   };
 
+  const handleApplyPathStyle = async () => {
+    if (!decodedSelection || !selectionSnapshot) {
+      setApplyError("Select an element to update.");
+      return;
+    }
+    const primary = decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id);
+    if (!primary || primary.kind !== "path") {
+      setApplyError("Select a path element to update.");
+      return;
+    }
+    const style = {
+      stroke_color: pathStrokeColor || undefined,
+      stroke_width_pt: Number.isFinite(pathStrokeWidth) ? pathStrokeWidth : undefined,
+      fill_color: pathFillColor || undefined
+    };
+    const updateOp = buildUpdateStyleOp(primary.id, "path", style);
+    if (!updateOp || updateOp.type !== "update_style") {
+      setApplyError("No style changes to apply.");
+      return;
+    }
+    setIsApplying(true);
+    setApplyError(null);
+    try {
+      const { response } = await commitOverlayWithRetry({
+        docId,
+        pageIndex: decodedSelection.page_index,
+        selection: selectionSnapshot,
+        ops: [updateOp],
+        commitOverlayPatch,
+        fetchOverlay: async (_docId, pageIndex) => refreshOverlayPage(pageIndex),
+        decodedSelection: decodedSelectionPayload,
+        fetchDecoded: async (_docId) => getDecodedDocument(_docId)
+      });
+      setOverlayByPage((prev) => ({
+        ...prev,
+        [decodedSelection.page_index]: {
+          entries: response.overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
+            acc[entry.element_id] = entry;
+            return acc;
+          }, {}),
+          masks: response.masks,
+          pageImageWidthPx: prev[decodedSelection.page_index]?.pageImageWidthPx,
+          pageImageHeightPx: prev[decodedSelection.page_index]?.pageImageHeightPx
+        }
+      }));
+      setDecodedSelection((current) =>
+        current
+          ? {
+              ...current,
+              elements: current.elements.map((element) =>
+                element.id === primary.id
+                  ? {
+                      ...element,
+                      stroke_color: updateOp.style.stroke_color ?? element.stroke_color,
+                      stroke_width_pt: updateOp.style.stroke_width_pt ?? element.stroke_width_pt,
+                      fill_color: updateOp.style.fill_color ?? element.fill_color,
+                      content_hash: response.overlay.find((entry) => entry.element_id === element.id)?.content_hash ??
+                        element.content_hash
+                    }
+                  : element
+              )
+            }
+          : current
+      );
+    } catch (err) {
+      setApplyError(err instanceof Error ? err.message : "Unable to apply style change.");
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
+  if (error) {
+    return <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-6">{error}</div>;
+  }
+
   return (
     <div className="flex h-full flex-col gap-6">
       <div className="flex items-center gap-4 rounded-2xl border border-forge-border bg-forge-panel/70 px-6 py-4">
@@ -497,7 +631,7 @@ export default function EditorPage() {
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-forge-border bg-forge-card/70 px-4 py-3">
             <div>
               <div className="text-sm text-slate-300">Overlay editor</div>
-              <div className="text-xs text-slate-500">Drag to select text</div>
+              <div className="text-xs text-slate-500">Drag to select text or shapes</div>
             </div>
             <button
               type="button"
@@ -546,6 +680,12 @@ export default function EditorPage() {
                           : []
                       }
                       showDebugOverlay={showDebugOverlay}
+                      onFontMapUpdate={(pageIndex, fontMap) =>
+                        setPdfFontMaps((prev) => ({
+                          ...prev,
+                          [pageIndex]: fontMap
+                        }))
+                      }
                       onRegionSelect={handleRegionSelect}
                     />
                   </div>
@@ -568,6 +708,11 @@ export default function EditorPage() {
                   <span className="text-slate-400">Page:</span> {decodedSelection.page_index + 1}
                 </p>
                 <p>
+                  <span className="text-slate-400">Kind:</span>{" "}
+                  {decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id)?.kind ??
+                    "—"}
+                </p>
+                <p>
                   <span className="text-slate-400">Text:</span>{" "}
                   {decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id)?.text ??
                     "—"}
@@ -576,6 +721,53 @@ export default function EditorPage() {
                   <span className="text-slate-400">BBox:</span>{" "}
                   {decodedSelection.region_bbox_norm.map((value) => value.toFixed(2)).join(", ")}
                 </p>
+                {fontWarning ? (
+                  <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-2 py-1 text-[11px] text-yellow-200">
+                    {fontWarning}
+                  </div>
+                ) : null}
+                {decodedSelection.elements.find((element) => element.id === decodedSelection.primary_id)?.kind ===
+                "path" ? (
+                  <div className="space-y-2 rounded-xl border border-forge-border bg-forge-panel/60 p-3">
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>Stroke</span>
+                      <input
+                        type="color"
+                        value={pathStrokeColor}
+                        onChange={(event) => setPathStrokeColor(event.target.value)}
+                        className="h-6 w-10 rounded border border-forge-border bg-transparent"
+                      />
+                    </div>
+                    <label className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                      Width (pt)
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={pathStrokeWidth}
+                        onChange={(event) => setPathStrokeWidth(Number(event.target.value))}
+                        className="w-20 rounded border border-forge-border bg-forge-panel/60 px-2 py-1 text-xs text-slate-200"
+                      />
+                    </label>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>Fill</span>
+                      <input
+                        type="color"
+                        value={pathFillColor ?? "#000000"}
+                        onChange={(event) => setPathFillColor(event.target.value)}
+                        className="h-6 w-10 rounded border border-forge-border bg-transparent"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="w-full rounded-lg border border-forge-border bg-forge-card/70 px-3 py-2 text-xs text-slate-200"
+                      onClick={() => void handleApplyPathStyle()}
+                      disabled={isApplying}
+                    >
+                      {isApplying ? "Applying…" : "Apply style"}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <p className="mt-3 text-xs text-slate-400">Select a text element to view details.</p>
@@ -615,7 +807,8 @@ export default function EditorPage() {
                 <ul className="mt-2 space-y-1">
                   {plan.ops.map((op) => (
                     <li key={`${op.type}-${op.element_id}`}>
-                      <span className="text-slate-400">{op.element_id.slice(0, 6)}:</span> {op.new_text}
+                      <span className="text-slate-400">{op.element_id.slice(0, 6)}:</span>{" "}
+                      {op.type === "replace_element" ? op.new_text : "Style update"}
                     </li>
                   ))}
                 </ul>

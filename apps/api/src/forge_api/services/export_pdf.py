@@ -301,7 +301,12 @@ def export_pdf_with_overlays(
                     base_text = overlay.get("base_text")
                     if base_text is None:
                         base_text = overlay.get("text")
-                    if overlay.get("text") == base_text:
+                    base_style = overlay.get("base_style") or {}
+                    style = overlay.get("style") or {}
+                    element_type = overlay.get("element_type") or "text"
+                    text_changed = overlay.get("text") != base_text
+                    style_changed = style != base_style
+                    if not text_changed and not style_changed:
                         continue
                     rect = _normalized_bbox_to_pdf_rect(
                         overlay.get("bbox") or [0.0, 0.0, 0.0, 0.0],
@@ -317,27 +322,32 @@ def export_pdf_with_overlays(
                         else:
                             fill_color = sampled
                     _overlay_rect(page, list(rect), padding_pt, fill_color)
-                    style = overlay.get("style") or {}
-                    font_name = _overlay_font(style.get("font_family"), bool(style.get("is_bold")))
-                    font_size = float(style.get("font_size_pt") or 12)
-                    color = _hex_to_rgb(style.get("color"))
-                    text_value = overlay.get("text") or ""
-                    try:
-                        page.insert_text(
-                            (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
-                            text_value,
-                            fontname=font_name,
-                            fontsize=font_size,
-                            color=color,
-                        )
-                    except (RuntimeError, ValueError):
-                        page.insert_text(
-                            (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
-                            text_value,
-                            fontname=DEFAULT_FONT,
-                            fontsize=font_size,
-                            color=color,
-                        )
+                    if element_type == "path":
+                        stroke_color = _hex_to_rgb(style.get("stroke_color")) if style.get("stroke_color") else None
+                        fill = _hex_to_rgb(style.get("fill_color")) if style.get("fill_color") else None
+                        width = float(style.get("stroke_width_pt") or 1)
+                        page.draw_rect(rect, color=stroke_color, fill=fill, width=width)
+                    else:
+                        font_name = _overlay_font(style.get("font_family"), bool(style.get("is_bold")))
+                        font_size = float(style.get("font_size_pt") or 12)
+                        color = _hex_to_rgb(style.get("color"))
+                        text_value = overlay.get("text") or base_text or ""
+                        try:
+                            page.insert_text(
+                                (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
+                                text_value,
+                                fontname=font_name,
+                                fontsize=font_size,
+                                color=color,
+                            )
+                        except (RuntimeError, ValueError):
+                            page.insert_text(
+                                (rect.x0, max(rect.y0 + 1, rect.y1 - 1)),
+                                text_value,
+                                fontname=DEFAULT_FONT,
+                                fontsize=font_size,
+                                color=color,
+                            )
 
         buffer = BytesIO()
         doc.save(buffer)

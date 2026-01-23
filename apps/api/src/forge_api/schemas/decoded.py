@@ -47,9 +47,12 @@ class TextRunElement(DecodedElementBase):
     kind: Literal["text_run"]
     text: str
     font_name: str | None = None
+    pdf_font_name: str | None = None
     font_size_pt: float | None = None
     color: str | None = None
     rotation: float | None = None
+    rotation_deg: float | None = None
+    render_mode: str | None = None
     baseline_norm: tuple[float, float] | None = None
 
 
@@ -58,6 +61,7 @@ class PathElement(DecodedElementBase):
     stroke_color: str | None = None
     stroke_width_pt: float | None = None
     fill_color: str | None = None
+    path_hint: str | None = None
     commands: list[dict]
     is_closed: bool | None = None
 

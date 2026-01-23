@@ -35,8 +35,12 @@ export type DecodePayload = {
 
 export type DecodedElementStyleV1 = {
   font_name?: string | null;
+  pdf_font_name?: string | null;
   font_size_pt?: number | null;
   color?: string | null;
+  stroke_color?: string | null;
+  stroke_width_pt?: number | null;
+  fill_color?: string | null;
 };
 
 export type DecodedElementV1 = {
@@ -45,8 +49,17 @@ export type DecodedElementV1 = {
   bbox_norm: [number, number, number, number];
   text?: string;
   font_name?: string | null;
+  pdf_font_name?: string | null;
   font_size_pt?: number | null;
   color?: string | null;
+  rotation_deg?: number | null;
+  render_mode?: string | null;
+  stroke_color?: string | null;
+  stroke_width_pt?: number | null;
+  fill_color?: string | null;
+  path_hint?: string | null;
+  commands?: Array<Record<string, unknown>>;
+  is_closed?: boolean | null;
   style?: DecodedElementStyleV1;
   content_hash?: string;
 };
@@ -222,6 +235,9 @@ export type ForgeManifestElement = {
     font_family: string;
     line_height?: number | null;
     wrap_policy?: "auto" | "nowrap" | "prewrap";
+    stroke_color?: string;
+    stroke_width_pt?: number;
+    fill_color?: string;
   };
   lines?: {
     text: string;
@@ -289,26 +305,38 @@ export type ForgeOverlaySelection = {
   text: string;
   content_hash: string;
   bbox: number[];
-  element_type?: ForgeManifestElement["element_type"];
+  element_type?: ForgeManifestElement["element_type"] | "path";
   style?: ForgeManifestElement["style"];
 };
 
-export type ForgeOverlayPatchOp = {
-  type: "replace_element";
-  element_id: string;
-  old_text?: string | null;
-  new_text: string;
-  style_changes?: Record<string, unknown> | null;
-  style?: {
-    color?: string;
-    font_size_pt?: number;
-    bold?: boolean;
-    italic?: boolean;
-  } | null;
-  meta?: {
-    overflow?: boolean;
-  } | null;
-};
+export type ForgeOverlayPatchOp =
+  | {
+      type: "replace_element";
+      element_id: string;
+      old_text?: string | null;
+      new_text: string;
+      style_changes?: Record<string, unknown> | null;
+      style?: {
+        color?: string;
+        font_size_pt?: number;
+        bold?: boolean;
+        italic?: boolean;
+      } | null;
+      meta?: {
+        overflow?: boolean;
+      } | null;
+    }
+  | {
+      type: "update_style";
+      element_id: string;
+      kind: "text_run" | "path";
+      style: {
+        color?: string;
+        stroke_color?: string;
+        stroke_width_pt?: number;
+        fill_color?: string;
+      };
+    };
 
 export type ForgeDecodedSelection = {
   page_index: number;

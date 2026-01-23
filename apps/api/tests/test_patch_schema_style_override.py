@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from pydantic import TypeAdapter
+
 from forge_api.schemas.patch import OverlayPatchOp, OverlayPatchPlan
 
 
 def test_overlay_patch_op_accepts_style_override() -> None:
-    op = OverlayPatchOp.model_validate(
+    op = TypeAdapter(OverlayPatchOp).validate_python(
         {
             "type": "replace_element",
             "element_id": "el-1",

@@ -21,6 +21,10 @@ def test_decode_text_pdf_has_text_runs() -> None:
         for value in element.bbox_norm:
             assert 0.0 <= value <= 1.0
         assert element.content_hash
+        if element.kind == "text_run":
+            assert element.pdf_font_name == element.font_name
+            assert element.rotation_deg is None
+            assert element.render_mode is None
 
 
 def test_decode_shape_pdf_paths_or_safe() -> None:
@@ -31,6 +35,10 @@ def test_decode_shape_pdf_paths_or_safe() -> None:
     path_elements = [element for element in page.elements if element.kind == "path"]
     if path_elements:
         assert page.stats.paths > 0
+        for element in path_elements:
+            assert element.stroke_color is None or element.stroke_color.startswith("#")
+            assert element.fill_color is None or element.fill_color.startswith("#")
+            assert element.path_hint is None or element.path_hint.strip() != ""
     else:
         assert page.stats.paths == 0
 
