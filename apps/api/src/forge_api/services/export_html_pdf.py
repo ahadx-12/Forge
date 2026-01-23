@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape
-import os
-import shutil
 from typing import Any
 
+from forge_api.core.errors import APIError
+from forge_api.services.chromium_runtime import resolve_chromium_executable
 from forge_api.services.forge_manifest import build_forge_manifest
 from forge_api.services.forge_overlay import build_overlay_state, load_overlay_custom_entries, load_overlay_patch_log
 
@@ -122,42 +122,27 @@ def export_pdf_from_html(doc_id: str) -> HtmlExportResult:
         + "".join(pages_html)
         + "</body></html>"
     )
+    chromium_path = resolve_chromium_executable()
+    if not chromium_path:
+        raise APIError(
+            status_code=503,
+            code="EXPORT_UNAVAILABLE",
+            message=(
+                "Chromium executable not found. "
+                "Set PLAYWRIGHT_CHROMIUM_EXECUTABLE or install system chromium."
+            ),
+        )
 
     from playwright.sync_api import sync_playwright
 
-    chromium_path = resolve_chromium_executable()
-
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path=chromium_path)
+        browser = playwright.chromium.launch(
+            executable_path=chromium_path,
+            args=["--no-sandbox"],
+        )
         page = browser.new_page()
         page.set_content(html, wait_until="load")
         pdf_bytes = page.pdf(prefer_css_page_size=True, print_background=True)
         browser.close()
 
     return HtmlExportResult(payload=pdf_bytes)
-
-
-def resolve_chromium_executable() -> str:
-    env_candidates = [
-        os.getenv("PLAYWRIGHT_CHROMIUM_PATH"),
-        os.getenv("CHROMIUM_PATH"),
-    ]
-    for candidate in env_candidates:
-        if candidate:
-            return candidate
-
-    which_candidate = shutil.which("chromium")
-    candidates = [
-        which_candidate,
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chrome",
-    ]
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return candidate
-
-    raise RuntimeError(
-        "Chromium executable not found. Set PLAYWRIGHT_CHROMIUM_PATH or CHROMIUM_PATH to a valid path."
-    )

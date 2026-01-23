@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import traceback
 
 from fastapi import FastAPI, Request
@@ -22,6 +21,7 @@ from forge_api.routers.ir import router as ir_router
 from forge_api.routers.patches import router as patches_router
 from forge_api.routers.forge import router as forge_router
 from forge_api.settings import get_settings
+from forge_api.services.chromium_runtime import log_chromium_startup_status
 
 
 # -----------------------------------------------------------------------------
@@ -56,18 +56,8 @@ app = FastAPI(title="Forge API", version="1.0.0")
 
 @app.on_event("startup")
 def assert_playwright_chromium_installed() -> None:
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:  # pragma: no cover - dependency import logging
-        logger.error("Playwright import failed: %s", exc)
-        return
-    with sync_playwright() as playwright:
-        executable_path = playwright.chromium.executable_path
-    if not os.path.exists(executable_path):
-        logger.error(
-            "Playwright chromium executable missing at %s. Run `playwright install --with-deps chromium`.",
-            executable_path,
-        )
+    settings = get_settings()
+    log_chromium_startup_status(settings, logger)
 
 app.add_middleware(
     CORSMiddleware,
