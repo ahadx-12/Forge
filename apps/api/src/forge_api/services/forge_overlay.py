@@ -75,15 +75,30 @@ def upsert_overlay_custom_entries(doc_id: str, entries: list[dict[str, Any]]) ->
     )
 
 
-def _overlay_content_hash(text: str, bbox: list[float], style: dict[str, Any]) -> str:
-    payload_core = {
-        "text": text,
-        "font_name": style.get("font_name") or style.get("font_family"),
-        "font_size_pt": style.get("font_size_pt"),
-        "color": style.get("color"),
-    }
+def _overlay_content_hash(
+    text: str,
+    bbox: list[float],
+    style: dict[str, Any],
+    element_kind: str = "text_run",
+    path_commands: list[dict[str, Any]] | None = None,
+) -> str:
+    payload_core: dict[str, Any] = {}
+    if element_kind == "path":
+        payload_core = {
+            "stroke_color": style.get("stroke_color"),
+            "stroke_width_pt": style.get("stroke_width_pt"),
+            "fill_color": style.get("fill_color"),
+            "commands": path_commands or [],
+        }
+    else:
+        payload_core = {
+            "text": text,
+            "font_name": style.get("font_name") or style.get("font_family"),
+            "font_size_pt": style.get("font_size_pt"),
+            "color": style.get("color"),
+        }
     bbox_norm = tuple(float(value) for value in (bbox[:4] if len(bbox) >= 4 else [0, 0, 0, 0]))
-    return stable_content_hash("text_run", bbox_norm, payload_core)
+    return stable_content_hash("path" if element_kind == "path" else "text_run", bbox_norm, payload_core)
 
 
 def _round(value: float) -> float:
@@ -188,13 +203,20 @@ def build_overlay_state(
             text = element.get("text", "")
             if not element_id:
                 continue
+            element_kind = "text_run"
             elements[element_id] = {
                 "text": text,
-                "content_hash": _overlay_content_hash(text, element.get("bbox") or [0.0, 0.0, 0.0, 0.0], element.get("style") or {}),
+                "content_hash": _overlay_content_hash(
+                    text,
+                    element.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                    element.get("style") or {},
+                    element_kind,
+                ),
                 "bbox": element.get("bbox") or [0.0, 0.0, 0.0, 0.0],
                 "style": element.get("style") or {},
                 "element_type": element.get("element_type") or "text",
                 "base_text": text,
+                "base_style": element.get("style") or {},
             }
             element_lookup[element_id] = {
                 "page_index": page_index,
@@ -211,13 +233,25 @@ def build_overlay_state(
         page_entry = overlay.setdefault(page_index, {"primitives": {}, "masks": []})
         base_text = entry.get("text", "")
         style = entry.get("style") or {}
+        element_kind = entry.get("element_type") or "text"
+        path_commands = entry.get("path_commands") or []
         page_entry["primitives"][element_id] = {
             "text": base_text,
-            "content_hash": _overlay_content_hash(base_text, entry.get("bbox") or [0.0, 0.0, 0.0, 0.0], style),
+            "content_hash": entry.get("content_hash")
+            or _overlay_content_hash(
+                base_text,
+                entry.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                style,
+                "path" if element_kind == "path" else "text_run",
+                path_commands=path_commands,
+            ),
             "bbox": entry.get("bbox") or [0.0, 0.0, 0.0, 0.0],
             "style": style,
             "element_type": entry.get("element_type") or "text",
             "base_text": base_text,
+            "base_style": style,
+            "path_commands": path_commands,
+            "path_hint": entry.get("path_hint"),
             "resolved_element_id": entry.get("resolved_element_id"),
         }
         element_lookup[element_id] = {
@@ -240,31 +274,53 @@ def build_overlay_state(
             if op.element_id not in page_map:
                 continue
             current = page_map[op.element_id]
-            current["text"] = op.new_text
-            current_style = current.get("style") or {}
-            if op.style_changes:
-                current_style.update(op.style_changes)
-            if op.style:
-                if op.style.get("color") is not None:
-                    current_style["color"] = op.style.get("color")
-                if op.style.get("font_size_pt") is not None:
-                    current_style["font_size_pt"] = op.style.get("font_size_pt")
-                if op.style.get("bold") is not None:
-                    current_style["is_bold"] = bool(op.style.get("bold"))
-                if op.style.get("italic") is not None:
-                    current_style["is_italic"] = bool(op.style.get("italic"))
-            current["style"] = current_style
-            current["content_hash"] = _overlay_content_hash(
-                current.get("text", ""),
-                current.get("bbox") or [0.0, 0.0, 0.0, 0.0],
-                current.get("style") or {},
-            )
-            base_text = current.get("base_text") or ""
-            if op.new_text != base_text:
-                masks_by_page.setdefault(page_index, {})[op.element_id] = _build_overlay_mask(
-                    op.element_id,
-                    element_meta["bbox"],
+            element_kind = "path" if current.get("element_type") == "path" else "text_run"
+            if op.type == "replace_element":
+                current["text"] = op.new_text
+                current_style = current.get("style") or {}
+                if op.style_changes:
+                    current_style.update(op.style_changes)
+                if op.style:
+                    if op.style.get("color") is not None:
+                        current_style["color"] = op.style.get("color")
+                    if op.style.get("font_size_pt") is not None:
+                        current_style["font_size_pt"] = op.style.get("font_size_pt")
+                    if op.style.get("bold") is not None:
+                        current_style["is_bold"] = bool(op.style.get("bold"))
+                    if op.style.get("italic") is not None:
+                        current_style["is_italic"] = bool(op.style.get("italic"))
+                current["style"] = current_style
+                current["content_hash"] = _overlay_content_hash(
+                    current.get("text", ""),
+                    current.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                    current.get("style") or {},
+                    element_kind,
+                    path_commands=current.get("path_commands") or [],
                 )
+                base_text = current.get("base_text") or ""
+                if op.new_text != base_text:
+                    masks_by_page.setdefault(page_index, {})[op.element_id] = _build_overlay_mask(
+                        op.element_id,
+                        element_meta["bbox"],
+                    )
+            elif op.type == "update_style":
+                current_style = current.get("style") or {}
+                current_style.update(op.style.model_dump(exclude_none=True))
+                current["style"] = current_style
+                current["content_hash"] = _overlay_content_hash(
+                    current.get("text", ""),
+                    current.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                    current.get("style") or {},
+                    element_kind,
+                    path_commands=current.get("path_commands") or [],
+                )
+                if element_kind == "text_run":
+                    base_style = current.get("base_style") or {}
+                    if current_style != base_style:
+                        masks_by_page.setdefault(page_index, {})[op.element_id] = _build_overlay_mask(
+                            op.element_id,
+                            element_meta["bbox"],
+                        )
 
     for page_index, masks in masks_by_page.items():
         if page_index in overlay:

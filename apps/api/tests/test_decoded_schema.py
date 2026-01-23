@@ -11,6 +11,10 @@ def test_decoded_schema_clamps_bbox() -> None:
         source="pdf",
         content_hash="hash",
         text="Sample",
+        pdf_font_name="Helvetica",
+        font_size_pt=11.5,
+        rotation_deg=None,
+        render_mode=None,
     )
 
     page = DecodedPage(

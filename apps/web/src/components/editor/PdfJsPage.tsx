@@ -16,6 +16,12 @@ import {
   type PdfJsRect,
   roundTo
 } from "@/components/editor/pdfJsGeometry";
+import {
+  buildPdfJsFontMap,
+  getPdfJsFontFamily,
+  normalizePdfJsTextTransform,
+  type PdfJsFontMap
+} from "@/components/editor/pdfTextRender";
 
 const DEBUG_OVERLAY_LIMIT = 60;
 
@@ -25,7 +31,10 @@ type PdfJsTextItem = {
   bbox: PdfJsNormalizedBbox;
   rect: PdfJsRect;
   fontSizePx: number;
-  fontFamily: string;
+  fontFamily: string | null;
+  fontName: string | null;
+  fontSizePxAtScale1: number;
+  transform: [number, number, number, number, number, number];
   content_hash: string;
   element_type: "text";
   style?: ForgeManifestElement["style"];
@@ -40,6 +49,7 @@ type PdfJsPageProps = {
   decodedPage?: DecodedPageV1 | null;
   selectedDecodedIds?: string[];
   onRegionSelect?: (pageIndex: number, bbox: [number, number, number, number]) => void;
+  onFontMapUpdate?: (pageIndex: number, fontMap: PdfJsFontMap) => void;
 };
 
 const toTextItem = (item: unknown): item is TextItem =>
@@ -81,13 +91,17 @@ export function PdfJsPage({
   showDebugOverlay,
   decodedPage,
   selectedDecodedIds,
-  onRegionSelect
+  onRegionSelect,
+  onFontMapUpdate
 }: PdfJsPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const onFontMapUpdateRef = useRef<typeof onFontMapUpdate>(onFontMapUpdate);
+  onFontMapUpdateRef.current = onFontMapUpdate;
   const [containerWidth, setContainerWidth] = useState(0);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0, scale: 1 });
   const [textItems, setTextItems] = useState<PdfJsTextItem[]>([]);
+  const [pdfFontMap, setPdfFontMap] = useState<PdfJsFontMap>({});
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -142,6 +156,9 @@ export function PdfJsPage({
       if (cancelled) {
         return;
       }
+      const nextFontMap = buildPdfJsFontMap(textContent.styles as Record<string, { fontFamily?: string }>);
+      setPdfFontMap(nextFontMap);
+      onFontMapUpdateRef.current?.(pageIndex, nextFontMap);
       const items = textContent.items
         .filter(toTextItem)
         .map((item) => {
@@ -161,10 +178,19 @@ export function PdfJsPage({
           ) {
             return null;
           }
+          const baseTransform = Util.transform(baseViewport.transform, item.transform);
+          const viewportTransform = Util.transform(viewport.transform, item.transform);
+          const normalizedTransform = normalizePdfJsTextTransform(viewportTransform);
+          if (!normalizedTransform) {
+            return null;
+          }
           const bbox = normalizeBbox(rectBase, baseViewport.width, baseViewport.height);
-          const fontSizePx = Math.abs(Math.hypot(item.transform[2], item.transform[3]) * viewport.scale);
+          const fontSizePxAtScale1 =
+            normalizePdfJsTextTransform(baseTransform)?.fontSizePx ?? Math.max(0, Math.hypot(item.transform[2], item.transform[3]));
+          const fontSizePx = normalizedTransform.fontSizePx;
           const fontSizePt = roundTo(fontSizePx / Math.max(scale, 0.01), 2);
-          const fontFamily = item.fontName ?? "";
+          const fontName = item.fontName ?? null;
+          const fontFamily = getPdfJsFontFamily(fontName, nextFontMap);
           const styleKey = [fontFamily, fontSizePt ? fontSizePt.toString() : ""].filter(Boolean).join("|");
           const element_id = buildElementId(pageIndex, text, bbox, styleKey);
           const content_hash = buildContentHash(text, bbox, styleKey);
@@ -175,11 +201,14 @@ export function PdfJsPage({
             rect,
             fontSizePx,
             fontFamily,
+            fontName,
+            fontSizePxAtScale1,
+            transform: normalizedTransform.matrix,
             content_hash,
             element_type: "text",
             style: {
               font_size_pt: fontSizePt,
-              font_family: fontFamily,
+              font_family: fontFamily ?? fontName ?? "",
               is_bold: false,
               is_italic: false,
               color: "#000"
@@ -280,22 +309,28 @@ export function PdfJsPage({
             const rect = normalizedToPixelRect(mask.bbox as [number, number, number, number], viewportSize);
             const textItem = textItemById.get(elementId);
             const fontSize = textItem?.fontSizePx ?? Math.max(10, rect.height * 0.6);
-            const fontFamily = textItem?.fontFamily;
+            const fontFamily =
+              textItem?.fontFamily ??
+              (textItem?.fontName ? getPdfJsFontFamily(textItem.fontName, pdfFontMap) : null) ??
+              "Helvetica, Arial, sans-serif";
+            const transform = textItem?.transform ?? [1, 0, 0, 1, rect.left, rect.top];
             return (
               <div
                 key={`overlay_${elementId}`}
                 style={{
                   position: "absolute",
-                  left: rect.left,
-                  top: rect.top,
+                  left: 0,
+                  top: 0,
                   width: rect.width,
                   height: rect.height,
                   color: "#000",
                   fontSize,
                   fontFamily,
-                  whiteSpace: "pre-wrap",
-                  lineHeight: 1.2,
-                  pointerEvents: "none"
+                  whiteSpace: "pre",
+                  lineHeight: 1,
+                  pointerEvents: "none",
+                  transform: `matrix(${transform.join(",")})`,
+                  transformOrigin: "0 0"
                 }}
               >
                 {overlayEntry.text}
@@ -316,15 +351,15 @@ export function PdfJsPage({
                 height: item.rect.height
               }}
             >
-              <span
-                style={{
-                  color: "transparent",
-                  fontSize: item.fontSizePx,
-                  fontFamily: item.fontFamily,
-                  lineHeight: 1,
-                  userSelect: "text"
-                }}
-              >
+                  <span
+                    style={{
+                      color: "transparent",
+                      fontSize: item.fontSizePx,
+                      fontFamily: item.fontFamily ?? "inherit",
+                      lineHeight: 1,
+                      userSelect: "text"
+                    }}
+                  >
                 {item.text}
               </span>
             </div>

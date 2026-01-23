@@ -155,22 +155,46 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
 
     selection_payload = [item.model_dump(mode="json") for item in payload.selection]
     resolved = resolve_overlay_selection(selection_payload, manifest_elements)
+    decoded_lookup = {
+        element.id: element
+        for element in (payload.decoded_selection.elements if payload.decoded_selection else [])
+    }
     custom_entries: list[dict[str, object]] = []
     for item in selection_payload:
         element_id = item.get("element_id")
         if not element_id or element_id in manifest_ids:
             continue
         resolved_item = resolved.get(element_id)
+        decoded_item = decoded_lookup.get(element_id)
         base_text = (resolved_item or {}).get("text") or item.get("text", "")
+        element_kind = (decoded_item.kind if decoded_item else None) or item.get("element_type") or "text"
+        style = (resolved_item or {}).get("style") or item.get("style") or {}
+        if decoded_item:
+            if decoded_item.kind == "path":
+                style = {
+                    "stroke_color": decoded_item.stroke_color,
+                    "stroke_width_pt": decoded_item.stroke_width_pt,
+                    "fill_color": decoded_item.fill_color,
+                }
+            elif decoded_item.kind == "text_run":
+                style = {
+                    "font_name": decoded_item.font_name,
+                    "font_size_pt": decoded_item.font_size_pt,
+                    "color": decoded_item.color,
+                }
         custom_entries.append(
             {
                 "element_id": element_id,
                 "page_index": payload.page_index,
                 "bbox": (resolved_item or {}).get("bbox") or item.get("bbox") or [0.0, 0.0, 0.0, 0.0],
                 "text": base_text,
-                "style": (resolved_item or {}).get("style") or item.get("style") or {},
-                "element_type": (resolved_item or {}).get("element_type") or item.get("element_type") or "text",
+                "style": style,
+                "element_type": (resolved_item or {}).get("element_type") or element_kind or "text",
                 "resolved_element_id": (resolved_item or {}).get("element_id"),
+                "content_hash": decoded_item.content_hash if decoded_item else item.get("content_hash"),
+                "path_commands": decoded_item.commands if decoded_item else None,
+                "path_hint": decoded_item.path_hint if decoded_item else None,
+                "path_closed": decoded_item.is_closed if decoded_item else None,
             }
         )
     if custom_entries:

@@ -204,6 +204,8 @@ def _validate_plan(payload: OverlayPatchPlanRequest, data: dict[str, Any]) -> Ov
     for op in plan.ops:
         if op.element_id not in selection_ids:
             raise ValueError("op targets outside selection")
+        if op.type != "replace_element":
+            continue
         if op.old_text and op.old_text != selection_text.get(op.element_id):
             raise ValueError("op old_text mismatch")
         if selection_types.get(op.element_id) == "list_item":
@@ -280,6 +282,8 @@ def plan_overlay_patch(payload: OverlayPatchPlanRequest) -> dict[str, Any]:
             warnings = plan.warnings or []
             selection_map = {item["element_id"]: item for item in selection_payload}
             for op in plan.ops:
+                if op.type != "replace_element":
+                    continue
                 selection_item = selection_map.get(op.element_id)
                 if selection_item and _estimate_overflow(op, selection_item, page_context):
                     meta = op.meta or {}

@@ -163,8 +163,15 @@ class DecodedSelectionElement(BaseModel):
     bbox_norm: list[float]
     text: str | None = None
     font_name: str | None = None
+    pdf_font_name: str | None = None
     font_size_pt: float | None = None
     color: str | None = None
+    stroke_color: str | None = None
+    stroke_width_pt: float | None = None
+    fill_color: str | None = None
+    path_hint: str | None = None
+    commands: list[dict[str, object]] | None = None
+    is_closed: bool | None = None
     style: dict[str, object] | None = None
     content_hash: str | None = None
 
@@ -178,7 +185,7 @@ class DecodedSelection(BaseModel):
     elements: list[DecodedSelectionElement]
 
 
-class OverlayPatchOp(BaseModel):
+class OverlayPatchReplaceElement(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["replace_element"]
@@ -188,6 +195,38 @@ class OverlayPatchOp(BaseModel):
     style_changes: dict[str, object] | None = None
     style: dict[str, object] | None = None
     meta: dict[str, object] | None = None
+
+
+class OverlayStyleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    color: str | None = None
+    stroke_color: str | None = None
+    stroke_width_pt: float | None = None
+    fill_color: str | None = None
+
+    @model_validator(mode="after")
+    def validate_fields(self) -> "OverlayStyleUpdate":
+        if (
+            self.color is None
+            and self.stroke_color is None
+            and self.stroke_width_pt is None
+            and self.fill_color is None
+        ):
+            raise ValueError("update_style requires at least one style field")
+        return self
+
+
+class OverlayPatchUpdateStyle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["update_style"]
+    element_id: str
+    kind: Literal["text_run", "path"]
+    style: OverlayStyleUpdate
+
+
+OverlayPatchOp = OverlayPatchReplaceElement | OverlayPatchUpdateStyle
 
 
 class OverlayPatchPlan(BaseModel):

@@ -117,6 +117,32 @@ def _commands_from_drawing(items: list[tuple[Any, ...]], page_height_pt: float) 
     return commands
 
 
+def _path_hint_from_commands(commands: list[dict[str, Any]], limit: int = 3) -> str | None:
+    if not commands:
+        return None
+    parts: list[str] = []
+    for command in commands[:limit]:
+        op = command.get("op")
+        if op == "M":
+            parts.append(f"M{command.get('x'):.1f},{command.get('y'):.1f}")
+        elif op == "L":
+            parts.append(f"L{command.get('x'):.1f},{command.get('y'):.1f}")
+        elif op == "R":
+            parts.append(
+                "R"
+                f"{command.get('x0'):.1f},{command.get('y0'):.1f},"
+                f"{command.get('x1'):.1f},{command.get('y1'):.1f}"
+            )
+        elif op == "C":
+            parts.append(
+                "C"
+                f"{command.get('x1'):.1f},{command.get('y1'):.1f},"
+                f"{command.get('x2'):.1f},{command.get('y2'):.1f},"
+                f"{command.get('x3'):.1f},{command.get('y3'):.1f}"
+            )
+    return " ".join(parts) if parts else None
+
+
 def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocument:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages: list[DecodedPage] = []
@@ -142,6 +168,7 @@ def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocu
                             continue
                         bbox_norm = _normalize_bbox(span.get("bbox", [0, 0, 0, 0]), width_pt, height_pt)
                         font_name = span.get("font")
+                        pdf_font_name = font_name if font_name else None
                         font_size_pt = float(span.get("size")) if span.get("size") is not None else None
                         color = _color_int_to_hex(span.get("color"))
                         payload_core = {
@@ -167,8 +194,11 @@ def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocu
                                 content_hash=content_hash,
                                 text=text,
                                 font_name=font_name,
+                                pdf_font_name=pdf_font_name,
                                 font_size_pt=font_size_pt,
                                 color=color,
+                                rotation_deg=None,
+                                render_mode=None,
                             )
                         )
                         stats.text_runs += 1
@@ -185,6 +215,7 @@ def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocu
                     continue
                 bbox_norm = _normalize_bbox((rect.x0, rect.y0, rect.x1, rect.y1), width_pt, height_pt)
                 commands = _commands_from_drawing(drawing.get("items", []), height_pt)
+                path_hint = _path_hint_from_commands(commands)
                 stroke_color = _color_tuple_to_hex(drawing.get("color"))
                 fill_color = _color_tuple_to_hex(drawing.get("fill"))
                 stroke_width_pt = drawing.get("width")
@@ -212,6 +243,7 @@ def decode_pdf_to_decoded_document(doc_id: str, pdf_bytes: bytes) -> DecodedDocu
                         stroke_color=stroke_color,
                         stroke_width_pt=float(stroke_width_pt) if stroke_width_pt is not None else None,
                         fill_color=fill_color,
+                        path_hint=path_hint,
                         commands=commands,
                         is_closed=drawing.get("closePath"),
                     )

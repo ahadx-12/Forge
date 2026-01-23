@@ -11,7 +11,7 @@ export type PickOptions = {
   maxResults?: number;
 };
 
-const DEFAULT_KINDS = ["text_run"];
+const DEFAULT_KINDS = ["text_run", "path"];
 
 export function clampBBox(bbox: BBox): BBox {
   const [x0, y0, x1, y1] = bbox;
