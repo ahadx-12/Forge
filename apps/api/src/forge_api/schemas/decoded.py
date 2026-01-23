@@ -19,6 +19,7 @@ class DecodedElementBase(BaseModel):
     kind: Literal["text_run", "path", "image", "unknown"]
     bbox_norm: tuple[float, float, float, float]
     source: Literal["pdf"]
+    content_hash: str
 
     model_config = ConfigDict(extra="forbid")
 

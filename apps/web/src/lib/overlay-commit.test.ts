@@ -32,7 +32,7 @@ test("commitOverlayWithRetry retries with server-provided content hash", async (
     } satisfies ForgeOverlayCommitResponse;
   };
 
-  const fetchOverlay = async (): Promise<ForgeOverlayResponse> => ({
+  const fetchOverlay = async (_docId: string, _pageIndex: number): Promise<ForgeOverlayResponse> => ({
     doc_id: "doc-1",
     page_index: 0,
     overlay: [

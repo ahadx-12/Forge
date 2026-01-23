@@ -20,6 +20,7 @@ def test_decode_text_pdf_has_text_runs() -> None:
     for element in page.elements:
         for value in element.bbox_norm:
             assert 0.0 <= value <= 1.0
+        assert element.content_hash
 
 
 def test_decode_shape_pdf_paths_or_safe() -> None:
@@ -56,3 +57,6 @@ def test_decode_ids_are_stable() -> None:
     first_ids = [element.id for element in first.pages[0].elements][:5]
     second_ids = [element.id for element in second.pages[0].elements][:5]
     assert first_ids == second_ids
+    first_hashes = [element.content_hash for element in first.pages[0].elements][:5]
+    second_hashes = [element.content_hash for element in second.pages[0].elements][:5]
+    assert first_hashes == second_hashes

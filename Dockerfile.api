@@ -5,7 +5,15 @@ WORKDIR /app
 # Copy only API requirements first (cache-friendly)
 COPY apps/api/requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir -r /app/requirements.txt
-RUN python -m playwright install --with-deps chromium
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        chromium \
+        fonts-noto-color-emoji \
+        fonts-noto-core \
+        fonts-dejavu-core \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -m playwright install chromium
 
 # Copy API source
 COPY apps/api/src /app/src

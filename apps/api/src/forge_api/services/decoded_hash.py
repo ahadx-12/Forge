@@ -35,3 +35,18 @@ def stable_element_id(
     serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
     return f"{kind[:2]}_{digest[:10]}"
+
+
+def stable_content_hash(
+    kind: str,
+    bbox_norm: tuple[float, float, float, float],
+    payload_core_fields: dict[str, Any],
+) -> str:
+    payload = {
+        "kind": kind,
+        "bbox_norm": bbox_norm,
+        "payload": payload_core_fields,
+    }
+    normalized = _normalize_for_hash(payload)
+    serialized = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()

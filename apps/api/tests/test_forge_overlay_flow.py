@@ -111,3 +111,6 @@ def test_forge_overlay_commit_conflict_payload(client, upload_pdf):
     assert payload["error"] == "PATCH_CONFLICT"
     assert payload["details"]["resolved_element_id"] == first_item["element_id"]
     assert payload["details"]["current_content_hash"] == overlay_entry["content_hash"]
+    assert payload["details"]["expected_content_hash"] == "mismatch"
+    assert payload["details"]["current_entry"]["element_id"] == first_item["element_id"]
+    assert payload["details"]["retry_hint"] == "refresh_overlay"

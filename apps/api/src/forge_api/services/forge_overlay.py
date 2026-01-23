@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -8,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from forge_api.schemas.patch import OverlayPatchOp, OverlayPatchRecord
+from forge_api.services.decoded_hash import stable_content_hash
 from forge_api.services.storage import get_patch_storage
 
 
@@ -75,8 +75,15 @@ def upsert_overlay_custom_entries(doc_id: str, entries: list[dict[str, Any]]) ->
     )
 
 
-def _compute_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def _overlay_content_hash(text: str, bbox: list[float], style: dict[str, Any]) -> str:
+    payload_core = {
+        "text": text,
+        "font_name": style.get("font_name") or style.get("font_family"),
+        "font_size_pt": style.get("font_size_pt"),
+        "color": style.get("color"),
+    }
+    bbox_norm = tuple(float(value) for value in (bbox[:4] if len(bbox) >= 4 else [0, 0, 0, 0]))
+    return stable_content_hash("text_run", bbox_norm, payload_core)
 
 
 def _round(value: float) -> float:
@@ -183,7 +190,7 @@ def build_overlay_state(
                 continue
             elements[element_id] = {
                 "text": text,
-                "content_hash": _compute_hash(text),
+                "content_hash": _overlay_content_hash(text, element.get("bbox") or [0.0, 0.0, 0.0, 0.0], element.get("style") or {}),
                 "bbox": element.get("bbox") or [0.0, 0.0, 0.0, 0.0],
                 "style": element.get("style") or {},
                 "element_type": element.get("element_type") or "text",
@@ -203,11 +210,12 @@ def build_overlay_state(
         page_index = int(page_index)
         page_entry = overlay.setdefault(page_index, {"primitives": {}, "masks": []})
         base_text = entry.get("text", "")
+        style = entry.get("style") or {}
         page_entry["primitives"][element_id] = {
             "text": base_text,
-            "content_hash": _compute_hash(base_text),
+            "content_hash": _overlay_content_hash(base_text, entry.get("bbox") or [0.0, 0.0, 0.0, 0.0], style),
             "bbox": entry.get("bbox") or [0.0, 0.0, 0.0, 0.0],
-            "style": entry.get("style") or {},
+            "style": style,
             "element_type": entry.get("element_type") or "text",
             "base_text": base_text,
             "resolved_element_id": entry.get("resolved_element_id"),
@@ -233,7 +241,24 @@ def build_overlay_state(
                 continue
             current = page_map[op.element_id]
             current["text"] = op.new_text
-            current["content_hash"] = _compute_hash(op.new_text)
+            current_style = current.get("style") or {}
+            if op.style_changes:
+                current_style.update(op.style_changes)
+            if op.style:
+                if op.style.get("color") is not None:
+                    current_style["color"] = op.style.get("color")
+                if op.style.get("font_size_pt") is not None:
+                    current_style["font_size_pt"] = op.style.get("font_size_pt")
+                if op.style.get("bold") is not None:
+                    current_style["is_bold"] = bool(op.style.get("bold"))
+                if op.style.get("italic") is not None:
+                    current_style["is_italic"] = bool(op.style.get("italic"))
+            current["style"] = current_style
+            current["content_hash"] = _overlay_content_hash(
+                current.get("text", ""),
+                current.get("bbox") or [0.0, 0.0, 0.0, 0.0],
+                current.get("style") or {},
+            )
             base_text = current.get("base_text") or ""
             if op.new_text != base_text:
                 masks_by_page.setdefault(page_index, {})[op.element_id] = _build_overlay_mask(

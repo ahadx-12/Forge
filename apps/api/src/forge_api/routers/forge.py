@@ -201,7 +201,8 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
             )
         expected_hash = selection_hashes.get(op.element_id)
         resolved_element_id = resolved.get(op.element_id, {}).get("element_id") or op.element_id
-        current_hash = page_primitives.get(resolved_element_id, {}).get("content_hash")
+        current_entry = page_primitives.get(resolved_element_id, {})
+        current_hash = current_entry.get("content_hash")
         if expected_hash and current_hash and current_hash != expected_hash:
             raise APIError(
                 status_code=409,
@@ -211,6 +212,13 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
                     "element_id": op.element_id,
                     "resolved_element_id": resolved_element_id,
                     "current_content_hash": current_hash,
+                    "expected_content_hash": expected_hash,
+                    "current_entry": {
+                        "element_id": resolved_element_id,
+                        "text": current_entry.get("text"),
+                        "content_hash": current_hash,
+                    },
+                    "retry_hint": "refresh_decoded" if payload.decoded_selection else "refresh_overlay",
                 },
             )
 

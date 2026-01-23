@@ -155,6 +155,29 @@ class OverlaySelection(BaseModel):
     style: dict[str, object] | None = None
 
 
+class DecodedSelectionElement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: str
+    bbox_norm: list[float]
+    text: str | None = None
+    font_name: str | None = None
+    font_size_pt: float | None = None
+    color: str | None = None
+    style: dict[str, object] | None = None
+    content_hash: str | None = None
+
+
+class DecodedSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page_index: int
+    region_bbox_norm: list[float]
+    primary_id: str | None = None
+    elements: list[DecodedSelectionElement]
+
+
 class OverlayPatchOp(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -163,6 +186,8 @@ class OverlayPatchOp(BaseModel):
     old_text: str | None = None
     new_text: str
     style_changes: dict[str, object] | None = None
+    style: dict[str, object] | None = None
+    meta: dict[str, object] | None = None
 
 
 class OverlayPatchPlan(BaseModel):
@@ -180,6 +205,7 @@ class OverlayPatchPlanRequest(BaseModel):
     page_index: int
     selection: list[OverlaySelection]
     user_prompt: str
+    decoded_selection: DecodedSelection | None = None
 
 
 class OverlayPatchCommitRequest(BaseModel):
@@ -189,6 +215,7 @@ class OverlayPatchCommitRequest(BaseModel):
     page_index: int
     selection: list[OverlaySelection]
     ops: list[OverlayPatchOp]
+    decoded_selection: DecodedSelection | None = None
 
 
 class OverlayPatchRecord(BaseModel):

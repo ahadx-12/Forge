@@ -33,6 +33,37 @@ export type DecodePayload = {
   extracted_at_iso: string;
 };
 
+export type DecodedElementStyleV1 = {
+  font_name?: string | null;
+  font_size_pt?: number | null;
+  color?: string | null;
+};
+
+export type DecodedElementV1 = {
+  id: string;
+  kind: "text_run" | "path" | "image" | "unknown";
+  bbox_norm: [number, number, number, number];
+  text?: string;
+  font_name?: string | null;
+  font_size_pt?: number | null;
+  color?: string | null;
+  style?: DecodedElementStyleV1;
+  content_hash?: string;
+};
+
+export type DecodedPageV1 = {
+  page_index: number;
+  width_pt: number;
+  height_pt: number;
+  elements: DecodedElementV1[];
+};
+
+export type DecodedDocumentV1 = {
+  doc_id: string;
+  version: "v1";
+  pages: DecodedPageV1[];
+};
+
 export type IRPrimitive = {
   id: string;
   kind: "text" | "path";
@@ -268,6 +299,22 @@ export type ForgeOverlayPatchOp = {
   old_text?: string | null;
   new_text: string;
   style_changes?: Record<string, unknown> | null;
+  style?: {
+    color?: string;
+    font_size_pt?: number;
+    bold?: boolean;
+    italic?: boolean;
+  } | null;
+  meta?: {
+    overflow?: boolean;
+  } | null;
+};
+
+export type ForgeDecodedSelection = {
+  page_index: number;
+  region_bbox_norm: [number, number, number, number];
+  primary_id?: string | null;
+  elements: DecodedElementV1[];
 };
 
 export type ForgeOverlayPlanRequest = {
@@ -275,6 +322,7 @@ export type ForgeOverlayPlanRequest = {
   page_index: number;
   selection: ForgeOverlaySelection[];
   user_prompt: string;
+  decoded_selection?: ForgeDecodedSelection;
 };
 
 export type ForgeOverlayPlanResponse = {
@@ -288,6 +336,7 @@ export type ForgeOverlayCommitRequest = {
   page_index: number;
   selection: ForgeOverlaySelection[];
   ops: ForgeOverlayPatchOp[];
+  decoded_selection?: ForgeDecodedSelection;
 };
 
 export type ForgeOverlayCommitResponse = {
@@ -491,6 +540,20 @@ export async function getDecode(docId: string): Promise<DecodePayload> {
     );
   }
   return (await response.json()) as DecodePayload;
+}
+
+export async function getDecodedDocument(docId: string): Promise<DecodedDocumentV1> {
+  const response = await fetch(apiUrl(`/v1/documents/${docId}/decoded?v=1`));
+  if (!response.ok) {
+    const detail = await readErrorDetail(response);
+    const suffix = [response.status, detail.code].filter(Boolean).join(" ");
+    throw new Error(
+      detail.message
+        ? `Failed to load decoded document (${suffix}): ${detail.message}`
+        : `Failed to load decoded document (${suffix})`
+    );
+  }
+  return (await response.json()) as DecodedDocumentV1;
 }
 
 export async function getIR(docId: string, pageIndex: number): Promise<IRPage> {
