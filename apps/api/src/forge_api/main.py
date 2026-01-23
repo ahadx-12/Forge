@@ -13,6 +13,7 @@ from forge_api.core.errors import APIError
 from forge_api.core.request_context import get_request_id
 from forge_api.routers.ai import router as ai_router
 from forge_api.routers.ai_overlay import router as ai_overlay_router
+from forge_api.routers.decoded import router as decoded_router
 from forge_api.routers.decode import router as decode_router
 from forge_api.routers.documents import router as documents_router
 from forge_api.routers.export import router as export_router
@@ -164,6 +165,7 @@ app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(forge_router)
 app.include_router(decode_router)
+app.include_router(decoded_router)
 app.include_router(ir_router)
 app.include_router(patches_router)
 app.include_router(export_router)
