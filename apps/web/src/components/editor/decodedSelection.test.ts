@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { pickDecodedTextElementsWithFallback, type BBox } from "./decodedHitTest";
+import { pixelRectToNormalizedBBox } from "./pageCanvas";
 
 const viewportSize = { width: 1000, height: 1000 };
 
@@ -41,4 +42,36 @@ test("pickDecodedTextElementsWithFallback returns empty when no text is nearby",
     nearestDistancePx: 10
   });
   assert.equal(picked.length, 0);
+});
+
+test("top selection picks top decoded elements", () => {
+  const elements = [
+    { id: "top", kind: "text_run", bbox_norm: [0.1, 0.05, 0.9, 0.12] as BBox },
+    { id: "bottom", kind: "text_run", bbox_norm: [0.1, 0.85, 0.9, 0.92] as BBox }
+  ];
+  const region = pixelRectToNormalizedBBox(
+    { left: 100, top: 50, width: 800, height: 200 },
+    { width: 1000, height: 2000 }
+  ) as BBox;
+  const picked = pickDecodedTextElementsWithFallback(elements, region, { viewportSize });
+  assert.deepEqual(
+    picked.map((item) => item.id),
+    ["top"]
+  );
+});
+
+test("bottom selection picks bottom decoded elements", () => {
+  const elements = [
+    { id: "top", kind: "text_run", bbox_norm: [0.1, 0.05, 0.9, 0.12] as BBox },
+    { id: "bottom", kind: "text_run", bbox_norm: [0.1, 0.85, 0.9, 0.92] as BBox }
+  ];
+  const region = pixelRectToNormalizedBBox(
+    { left: 100, top: 1700, width: 800, height: 200 },
+    { width: 1000, height: 2000 }
+  ) as BBox;
+  const picked = pickDecodedTextElementsWithFallback(elements, region, { viewportSize });
+  assert.deepEqual(
+    picked.map((item) => item.id),
+    ["bottom"]
+  );
 });
