@@ -14,6 +14,7 @@ from forge_api.services.forge_overlay import (
     build_overlay_state,
     load_overlay_patch_log,
     load_overlay_custom_entries,
+    load_overlay_version,
     resolve_overlay_selection,
     upsert_overlay_custom_entries,
 )
@@ -73,6 +74,7 @@ def get_forge_overlay(doc_id: str, page_index: int = Query(..., ge=0)) -> dict:
             },
         ) from exc
     patchsets = load_overlay_patch_log(doc_id)
+    overlay_version = len(patchsets)
     overlay_state = build_overlay_state(
         manifest,
         patchsets,
@@ -95,6 +97,7 @@ def get_forge_overlay(doc_id: str, page_index: int = Query(..., ge=0)) -> dict:
         "page_index": page_index,
         "overlay": entries,
         "masks": page_overlay.get("masks", []),
+        "overlay_version": overlay_version,
         "page_image_width_px": manifest_page.get("width_px"),
         "page_image_height_px": manifest_page.get("height_px"),
         "pdf_box_width_pt": manifest_page.get("width_pt"),
@@ -143,9 +146,6 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
             },
         ) from exc
 
-    selection_ids = {item.element_id for item in payload.selection}
-    selection_hashes = {item.element_id: item.content_hash for item in payload.selection}
-
     manifest_pages = {page.get("page_index"): page for page in manifest.get("pages", [])}
     manifest_page = manifest_pages.get(payload.page_index)
     if manifest_page is None:
@@ -154,6 +154,20 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
     manifest_ids = {item.get("element_id") for item in manifest_elements}
 
     selection_payload = [item.model_dump(mode="json") for item in payload.selection]
+    selection_ids = {item.element_id for item in payload.selection}
+    selection_hashes = {item.element_id: item.content_hash for item in payload.selection}
+
+    # Overlay versioning: commit must be based on the latest overlay version to avoid stale writes.
+    current_version = load_overlay_version(doc_id)
+    if payload.base_overlay_version != current_version:
+        raise APIError(
+            status_code=409,
+            code="PATCH_CONFLICT",
+            message="Overlay version mismatch",
+            details={
+                "current_overlay_version": current_version,
+            },
+        )
     resolved = resolve_overlay_selection(selection_payload, manifest_elements)
     decoded_lookup = {
         element.id: element
@@ -266,4 +280,5 @@ def commit_forge_overlay(doc_id: str, payload: OverlayPatchCommitRequest) -> Ove
         patchset=record,
         overlay=entries,
         masks=page_overlay.get("masks", []),
+        overlay_version=current_version + 1,
     )

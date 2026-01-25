@@ -16,13 +16,16 @@ def test_forge_manifest_overlay_export(client, upload_pdf):
 
     overlay_response = client.get(f"/v1/documents/{doc_id}/forge/overlay?page_index=0")
     assert overlay_response.status_code == 200
+    overlay_payload = overlay_response.json()
     overlay_entry = next(
-        entry for entry in overlay_response.json()["overlay"] if entry["element_id"] == first_item["element_id"]
+        entry for entry in overlay_payload["overlay"] if entry["element_id"] == first_item["element_id"]
     )
+    overlay_version = overlay_payload["overlay_version"]
 
     overlay_payload = {
         "doc_id": doc_id,
         "page_index": 0,
+        "base_overlay_version": overlay_version,
         "selection": [
             {
                 "element_id": first_item["element_id"],
@@ -45,6 +48,7 @@ def test_forge_manifest_overlay_export(client, upload_pdf):
     commit = client.post(f"/v1/documents/{doc_id}/forge/overlay/commit", json=overlay_payload)
     assert commit.status_code == 200
     commit_payload = commit.json()
+    assert commit_payload["overlay_version"] == overlay_version + 1
     overlay_entries = commit_payload["overlay"]
     assert any(entry["text"] == "Forge Pact" for entry in overlay_entries)
     masks = commit_payload["masks"]
@@ -80,6 +84,7 @@ def test_forge_overlay_commit_conflict_payload(client, upload_pdf):
     overlay_entry = next(
         entry for entry in overlay_response["overlay"] if entry["element_id"] == first_item["element_id"]
     )
+    overlay_version = overlay_response["overlay_version"]
 
     commit = client.post(
         f"/v1/documents/{doc_id}/forge/overlay/commit",
@@ -96,6 +101,7 @@ def test_forge_overlay_commit_conflict_payload(client, upload_pdf):
                     "style": first_item["style"],
                 }
             ],
+            "base_overlay_version": overlay_version,
             "ops": [
                 {
                     "type": "replace_element",

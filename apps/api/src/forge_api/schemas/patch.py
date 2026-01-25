@@ -192,6 +192,10 @@ class OverlayPatchReplaceElement(BaseModel):
     element_id: str
     old_text: str | None = None
     new_text: str
+    preserve_style: bool = True
+    preserve_position: bool = True
+    preserve_font_size: bool = True
+    preserve_color: bool = True
     style_changes: dict[str, object] | None = None
     style: dict[str, object] | None = None
     meta: dict[str, object] | None = None
@@ -245,6 +249,7 @@ class OverlayPatchPlanRequest(BaseModel):
     selection: list[OverlaySelection]
     user_prompt: str
     decoded_selection: DecodedSelection | None = None
+    base_overlay_version: int | None = None
 
 
 class OverlayPatchCommitRequest(BaseModel):
@@ -252,6 +257,7 @@ class OverlayPatchCommitRequest(BaseModel):
 
     doc_id: str
     page_index: int
+    base_overlay_version: int
     selection: list[OverlaySelection]
     ops: list[OverlayPatchOp]
     decoded_selection: DecodedSelection | None = None
@@ -279,3 +285,4 @@ class OverlayPatchCommitResponse(BaseModel):
     patchset: OverlayPatchRecord
     overlay: list[OverlayEntry]
     masks: list[OverlayMask]
+    overlay_version: int

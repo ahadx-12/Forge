@@ -28,6 +28,10 @@ def load_overlay_patch_log(doc_id: str) -> list[OverlayPatchRecord]:
     return [OverlayPatchRecord.model_validate(item) for item in payload]
 
 
+def load_overlay_version(doc_id: str) -> int:
+    return len(load_overlay_patch_log(doc_id))
+
+
 def append_overlay_patchset(doc_id: str, ops: list[OverlayPatchOp]) -> OverlayPatchRecord:
     storage = get_patch_storage()
     patchsets = load_overlay_patch_log(doc_id)
@@ -278,17 +282,28 @@ def build_overlay_state(
             if op.type == "replace_element":
                 current["text"] = op.new_text
                 current_style = current.get("style") or {}
-                if op.style_changes:
-                    current_style.update(op.style_changes)
-                if op.style:
-                    if op.style.get("color") is not None:
-                        current_style["color"] = op.style.get("color")
-                    if op.style.get("font_size_pt") is not None:
-                        current_style["font_size_pt"] = op.style.get("font_size_pt")
-                    if op.style.get("bold") is not None:
-                        current_style["is_bold"] = bool(op.style.get("bold"))
-                    if op.style.get("italic") is not None:
-                        current_style["is_italic"] = bool(op.style.get("italic"))
+                preserve_style = op.preserve_style if op.preserve_style is not None else True
+                preserve_font_size = (
+                    op.preserve_font_size if op.preserve_font_size is not None else preserve_style
+                )
+                preserve_color = op.preserve_color if op.preserve_color is not None else preserve_style
+                if not preserve_style:
+                    if op.style_changes:
+                        for key, value in op.style_changes.items():
+                            if key == "font_size_pt" and preserve_font_size:
+                                continue
+                            if key == "color" and preserve_color:
+                                continue
+                            current_style[key] = value
+                    if op.style:
+                        if op.style.get("color") is not None and not preserve_color:
+                            current_style["color"] = op.style.get("color")
+                        if op.style.get("font_size_pt") is not None and not preserve_font_size:
+                            current_style["font_size_pt"] = op.style.get("font_size_pt")
+                        if op.style.get("bold") is not None:
+                            current_style["is_bold"] = bool(op.style.get("bold"))
+                        if op.style.get("italic") is not None:
+                            current_style["is_italic"] = bool(op.style.get("italic"))
                 current["style"] = current_style
                 current["content_hash"] = _overlay_content_hash(
                     current.get("text", ""),

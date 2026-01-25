@@ -83,6 +83,7 @@ type OverlayPageState = {
   masks: ForgeOverlayMask[];
   pageImageWidthPx?: number;
   pageImageHeightPx?: number;
+  overlayVersion?: number;
 };
 
 const EMPTY_OVERLAY: Record<number, OverlayPageState> = {};
@@ -105,6 +106,7 @@ export default function EditorPage() {
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
   const [decodedSelection, setDecodedSelection] = useState<DecodedSelection | null>(null);
   const [plan, setPlan] = useState<ForgeOverlayPlanResponse | null>(null);
+  const [planBaseOverlayVersion, setPlanBaseOverlayVersion] = useState<number | null>(null);
   const [prompt, setPrompt] = useState("");
   const [planError, setPlanError] = useState<string | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -254,7 +256,8 @@ export default function EditorPage() {
               overlay: response.overlay,
               masks: response.masks,
               pageImageWidthPx: response.page_image_width_px,
-              pageImageHeightPx: response.page_image_height_px
+              pageImageHeightPx: response.page_image_height_px,
+              overlayVersion: response.overlay_version
             };
           })
         );
@@ -262,7 +265,7 @@ export default function EditorPage() {
           return;
         }
         const nextOverlay: Record<number, OverlayPageState> = {};
-        overlays.forEach(({ pageIndex, overlay, masks, pageImageWidthPx, pageImageHeightPx }) => {
+        overlays.forEach(({ pageIndex, overlay, masks, pageImageWidthPx, pageImageHeightPx, overlayVersion }) => {
           nextOverlay[pageIndex] = {
             entries: overlay.reduce<Record<string, ForgeOverlayEntry>>((acc, entry) => {
               acc[entry.element_id] = entry;
@@ -270,7 +273,8 @@ export default function EditorPage() {
             }, {}),
             masks,
             pageImageWidthPx,
-            pageImageHeightPx
+            pageImageHeightPx,
+            overlayVersion
           };
         });
         setOverlayByPage(nextOverlay);
@@ -311,7 +315,8 @@ export default function EditorPage() {
         entries: nextEntries,
         masks: response.masks,
         pageImageWidthPx: response.page_image_width_px,
-        pageImageHeightPx: response.page_image_height_px
+        pageImageHeightPx: response.page_image_height_px,
+        overlayVersion: response.overlay_version
       }
     }));
     return response;
@@ -373,6 +378,7 @@ export default function EditorPage() {
     };
     setDecodedSelection(nextSelection);
     setPlan(null);
+    setPlanBaseOverlayVersion(null);
     setPlanError(null);
     setApplyError(null);
   };
@@ -445,14 +451,21 @@ export default function EditorPage() {
     setIsPlanning(true);
     setPlanError(null);
     try {
+      let baseOverlayVersion = overlayByPage[decodedSelection.page_index]?.overlayVersion;
+      if (baseOverlayVersion === undefined) {
+        const refreshed = await refreshOverlayPage(decodedSelection.page_index);
+        baseOverlayVersion = refreshed.overlay_version;
+      }
       const response = await planOverlayPatch({
         doc_id: docId,
         page_index: decodedSelection.page_index,
         selection: selectionSnapshot,
         user_prompt: prompt.trim(),
-        decoded_selection: decodedSelectionPayload
+        decoded_selection: decodedSelectionPayload,
+        base_overlay_version: baseOverlayVersion
       });
       setPlan(response);
+      setPlanBaseOverlayVersion(baseOverlayVersion ?? null);
     } catch (err) {
       setPlanError(err instanceof Error ? err.message : "Unable to plan overlay change.");
     } finally {
@@ -465,16 +478,31 @@ export default function EditorPage() {
       setApplyError("No overlay plan to apply.");
       return;
     }
+    const baseOverlayVersion =
+      planBaseOverlayVersion ?? overlayByPage[decodedSelection.page_index]?.overlayVersion ?? null;
+    if (baseOverlayVersion === null) {
+      setApplyError("Overlay version is unavailable. Refresh the page and retry.");
+      return;
+    }
     setIsApplying(true);
     setApplyError(null);
     try {
       const { response, selection } = await commitOverlayWithRetry({
         docId,
         pageIndex: decodedSelection.page_index,
+        baseOverlayVersion,
         selection: selectionSnapshot,
         ops: plan.ops,
         commitOverlayPatch,
         fetchOverlay: async (_docId, pageIndex) => refreshOverlayPage(pageIndex),
+        planOverlayPatch,
+        planRequest: {
+          doc_id: docId,
+          page_index: decodedSelection.page_index,
+          selection: selectionSnapshot,
+          user_prompt: prompt.trim(),
+          decoded_selection: decodedSelectionPayload
+        },
         decodedSelection: decodedSelectionPayload,
         fetchDecoded: async (_docId) => getDecodedDocument(_docId)
       });
@@ -487,7 +515,8 @@ export default function EditorPage() {
           }, {}),
           masks: response.masks,
           pageImageWidthPx: prev[decodedSelection.page_index]?.pageImageWidthPx,
-          pageImageHeightPx: prev[decodedSelection.page_index]?.pageImageHeightPx
+          pageImageHeightPx: prev[decodedSelection.page_index]?.pageImageHeightPx,
+          overlayVersion: response.overlay_version
         }
       }));
       const committedSelection = selection[0];
@@ -510,10 +539,11 @@ export default function EditorPage() {
         );
       }
       setPlan(null);
+      setPlanBaseOverlayVersion(null);
       setPrompt("");
     } catch (err) {
       if (err instanceof ApiError && err.code === "PATCH_CONFLICT") {
-        setApplyError("Another change happened. Refresh the selection and retry.");
+        setApplyError("Another change happened. Retry the change.");
       } else {
         setApplyError(err instanceof Error ? err.message : "Unable to apply overlay change.");
       }
@@ -542,12 +572,18 @@ export default function EditorPage() {
       setApplyError("No style changes to apply.");
       return;
     }
+    const baseOverlayVersion = overlayByPage[decodedSelection.page_index]?.overlayVersion;
+    if (baseOverlayVersion === undefined) {
+      setApplyError("Overlay version is unavailable. Refresh the page and retry.");
+      return;
+    }
     setIsApplying(true);
     setApplyError(null);
     try {
       const { response } = await commitOverlayWithRetry({
         docId,
         pageIndex: decodedSelection.page_index,
+        baseOverlayVersion,
         selection: selectionSnapshot,
         ops: [updateOp],
         commitOverlayPatch,
@@ -564,7 +600,8 @@ export default function EditorPage() {
           }, {}),
           masks: response.masks,
           pageImageWidthPx: prev[decodedSelection.page_index]?.pageImageWidthPx,
-          pageImageHeightPx: prev[decodedSelection.page_index]?.pageImageHeightPx
+          pageImageHeightPx: prev[decodedSelection.page_index]?.pageImageHeightPx,
+          overlayVersion: response.overlay_version
         }
       }));
       setDecodedSelection((current) =>

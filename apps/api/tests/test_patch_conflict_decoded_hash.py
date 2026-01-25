@@ -8,6 +8,8 @@ def test_overlay_commit_conflict_with_decoded_hash(client, upload_pdf):
     decoded = client.get(f"/v1/documents/{doc_id}/decoded?v=1").json()
     page = decoded["pages"][0]
     element = next(item for item in page["elements"] if item["kind"] == "text_run")
+    overlay_response = client.get(f"/v1/documents/{doc_id}/forge/overlay?page_index=0").json()
+    overlay_version = overlay_response["overlay_version"]
 
     element_style = {
         "font_name": element.get("font_name"),
@@ -42,6 +44,7 @@ def test_overlay_commit_conflict_with_decoded_hash(client, upload_pdf):
                     "style": element_style,
                 }
             ],
+            "base_overlay_version": overlay_version,
             "decoded_selection": {
                 "page_index": 0,
                 "region_bbox_norm": element["bbox_norm"],

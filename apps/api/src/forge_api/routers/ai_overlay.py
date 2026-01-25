@@ -45,6 +45,10 @@ OUTPUT SCHEMA:
       "element_id": "p0_e5",
       "old_text": "...",
       "new_text": "...",
+      "preserve_style": true,
+      "preserve_position": true,
+      "preserve_font_size": true,
+      "preserve_color": true,
       "style_changes": {"font_size_pt": 14.0}
     }
   ],
@@ -87,6 +91,7 @@ def build_user_prompt(selection: list[dict[str, Any]], user_request: str, page_c
             "TASK: Modify the selected element(s) according to the user's request.",
             "Keep changes minimal and preserve visual layout unless explicitly asked otherwise.",
             "DO NOT change styling/size unless user explicitly asks.",
+            "Set preserve_style/preserve_position/preserve_font_size/preserve_color to false only when asked.",
             "If text length would increase significantly, intelligently condense or suggest alternatives.",
         ]
     )
@@ -190,6 +195,7 @@ def build_decoded_user_prompt(
             "TASK: Modify the primary element text first. Use other selected text as context.",
             "Keep changes minimal and preserve visual layout unless explicitly asked otherwise.",
             "DO NOT change styling/size unless user explicitly asks.",
+            "Set preserve_style/preserve_position/preserve_font_size/preserve_color to false only when asked.",
         ]
     )
 
