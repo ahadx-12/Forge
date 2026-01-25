@@ -45,7 +45,8 @@ def _color_tuple_to_hex(color: Iterable[float] | None) -> str | None:
 
 
 def _pdf_point_to_top_left(x: float, y: float, page_height_pt: float) -> tuple[float, float]:
-    return x, page_height_pt - y
+    # PyMuPDF (fitz) text/drawing coordinates already use top-left origin.
+    return x, y
 
 
 def _normalize_bbox(
@@ -53,14 +54,13 @@ def _normalize_bbox(
     page_width_pt: float,
     page_height_pt: float,
 ) -> tuple[float, float, float, float]:
+    # Normalized bboxes use a top-left origin (y grows downward) to align with DOM coordinates.
     items = list(bbox)
     if len(items) < 4 or page_width_pt <= 0 or page_height_pt <= 0:
         return (0.0, 0.0, 0.0, 0.0)
     x0, y0, x1, y1 = (float(item) for item in items[:4])
-    top_left = _pdf_point_to_top_left(x0, y1, page_height_pt)
-    bottom_right = _pdf_point_to_top_left(x1, y0, page_height_pt)
-    x_min, x_max = sorted((top_left[0], bottom_right[0]))
-    y_min, y_max = sorted((top_left[1], bottom_right[1]))
+    x_min, x_max = sorted((x0, x1))
+    y_min, y_max = sorted((y0, y1))
     x0_norm = x_min / page_width_pt
     x1_norm = x_max / page_width_pt
     y0_norm = y_min / page_height_pt

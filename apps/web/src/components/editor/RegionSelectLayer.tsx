@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 
+import { pixelRectToNormalizedBBox } from "@/components/editor/pageCanvas";
+
 type RegionSelectLayerProps = {
   width: number;
   height: number;
@@ -67,12 +69,10 @@ export function RegionSelectLayer({ width, height, onSelect }: RegionSelectLayer
     x1 = clamp(x1, 0, width);
     y1 = clamp(y1, 0, height);
 
-    const bboxNorm: [number, number, number, number] = [
-      clamp(x0 / width, 0, 1),
-      clamp(y0 / height, 0, 1),
-      clamp(x1 / width, 0, 1),
-      clamp(y1 / height, 0, 1)
-    ];
+    const bboxNorm = pixelRectToNormalizedBBox(
+      { left: x0, top: y0, width: x1 - x0, height: y1 - y0 },
+      { width, height }
+    );
     onSelect(bboxNorm);
     originRef.current = null;
     setCurrent(null);
