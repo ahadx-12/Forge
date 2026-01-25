@@ -68,3 +68,19 @@ def test_decode_ids_are_stable() -> None:
     first_hashes = [element.content_hash for element in first.pages[0].elements][:5]
     second_hashes = [element.content_hash for element in second.pages[0].elements][:5]
     assert first_hashes == second_hashes
+
+
+def test_decode_bbox_norm_preserves_top_left_origin() -> None:
+    doc = fitz.open()
+    page = doc.new_page(width=600, height=800)
+    page.insert_text((72, 72), "TOP")
+    page.insert_text((72, 720), "BOTTOM")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    decoded = decode_pdf_to_decoded_document("doc-coords", pdf_bytes)
+    page = decoded.pages[0]
+    top = next(element for element in page.elements if element.kind == "text_run" and element.text == "TOP")
+    bottom = next(element for element in page.elements if element.kind == "text_run" and element.text == "BOTTOM")
+
+    assert top.bbox_norm[1] < bottom.bbox_norm[1]

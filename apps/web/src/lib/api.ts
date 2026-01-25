@@ -292,6 +292,7 @@ export type ForgeOverlayResponse = {
   page_index: number;
   overlay: ForgeOverlayEntry[];
   masks: ForgeOverlayMask[];
+  overlay_version: number;
   page_image_width_px?: number;
   page_image_height_px?: number;
   pdf_box_width_pt?: number;
@@ -315,6 +316,10 @@ export type ForgeOverlayPatchOp =
       element_id: string;
       old_text?: string | null;
       new_text: string;
+      preserve_style?: boolean;
+      preserve_position?: boolean;
+      preserve_font_size?: boolean;
+      preserve_color?: boolean;
       style_changes?: Record<string, unknown> | null;
       style?: {
         color?: string;
@@ -351,6 +356,7 @@ export type ForgeOverlayPlanRequest = {
   selection: ForgeOverlaySelection[];
   user_prompt: string;
   decoded_selection?: ForgeDecodedSelection;
+  base_overlay_version?: number;
 };
 
 export type ForgeOverlayPlanResponse = {
@@ -362,6 +368,7 @@ export type ForgeOverlayPlanResponse = {
 export type ForgeOverlayCommitRequest = {
   doc_id: string;
   page_index: number;
+  base_overlay_version: number;
   selection: ForgeOverlaySelection[];
   ops: ForgeOverlayPatchOp[];
   decoded_selection?: ForgeDecodedSelection;
@@ -375,6 +382,7 @@ export type ForgeOverlayCommitResponse = {
   };
   overlay: ForgeOverlayEntry[];
   masks: ForgeOverlayMask[];
+  overlay_version: number;
 };
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;

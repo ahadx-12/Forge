@@ -4,6 +4,8 @@ import type {
   ForgeOverlayCommitRequest,
   ForgeOverlayCommitResponse,
   ForgeOverlayPatchOp,
+  ForgeOverlayPlanRequest,
+  ForgeOverlayPlanResponse,
   ForgeOverlayResponse,
   ForgeOverlaySelection
 } from "./api";
@@ -12,12 +14,14 @@ import { ApiError } from "./api";
 type CommitOverlayPatch = (docId: string, payload: ForgeOverlayCommitRequest) => Promise<ForgeOverlayCommitResponse>;
 type FetchOverlay = (docId: string, pageIndex: number) => Promise<ForgeOverlayResponse>;
 type FetchDecoded = (docId: string) => Promise<DecodedDocumentV1>;
+type PlanOverlayPatch = (payload: ForgeOverlayPlanRequest) => Promise<ForgeOverlayPlanResponse>;
 
 type PatchConflictDetails = {
   resolvedElementId?: string;
   currentContentHash?: string;
   retryHint?: "refresh_overlay" | "refresh_decoded";
   currentEntry?: { elementId?: string; text?: string; contentHash?: string };
+  currentOverlayVersion?: number;
 };
 
 export type OverlayCommitRetryResult = {
@@ -58,7 +62,9 @@ function parsePatchConflictDetails(error: unknown): PatchConflictDetails | null 
           contentHash:
             typeof currentEntry.content_hash === "string" ? currentEntry.content_hash : undefined
         }
-      : undefined
+      : undefined,
+    currentOverlayVersion:
+      typeof details.current_overlay_version === "number" ? details.current_overlay_version : undefined
   };
 }
 
@@ -69,69 +75,109 @@ export async function commitOverlayWithRetry(options: {
   ops: ForgeOverlayPatchOp[];
   commitOverlayPatch: CommitOverlayPatch;
   fetchOverlay: FetchOverlay;
+  baseOverlayVersion?: number;
+  planOverlayPatch?: PlanOverlayPatch;
+  planRequest?: Omit<ForgeOverlayPlanRequest, "base_overlay_version">;
+  maxRetries?: number;
   decodedSelection?: ForgeDecodedSelection;
   fetchDecoded?: FetchDecoded;
 }): Promise<OverlayCommitRetryResult> {
-  const { docId, pageIndex, selection, ops, commitOverlayPatch, fetchOverlay, decodedSelection, fetchDecoded } = options;
+  const {
+    docId,
+    pageIndex,
+    selection,
+    ops,
+    commitOverlayPatch,
+    fetchOverlay,
+    baseOverlayVersion,
+    planOverlayPatch,
+    planRequest,
+    maxRetries = 2,
+    decodedSelection,
+    fetchDecoded
+  } = options;
   if (selection.length === 0) {
     throw new Error("Selection is required to commit overlay changes.");
   }
-  const attemptCommit = (nextSelection: ForgeOverlaySelection[]) =>
+  if (baseOverlayVersion === undefined || baseOverlayVersion === null) {
+    throw new Error("Overlay version is required to commit overlay changes.");
+  }
+
+  let currentSelection = selection;
+  let currentOps = ops;
+  let currentBaseVersion = baseOverlayVersion;
+  let refreshedOverlay: ForgeOverlayResponse | undefined;
+
+  const attemptCommit = (nextSelection: ForgeOverlaySelection[], nextOps: ForgeOverlayPatchOp[]) =>
     commitOverlayPatch(docId, {
       doc_id: docId,
       page_index: pageIndex,
+      base_overlay_version: currentBaseVersion,
       selection: nextSelection,
-      ops,
+      ops: nextOps,
       decoded_selection: decodedSelection
     });
 
-  try {
-    const response = await attemptCommit(selection);
-    return { response, selection };
-  } catch (error) {
-    const conflict = parsePatchConflictDetails(error);
-    if (!conflict) {
-      throw error;
-    }
-    if (conflict.retryHint === "refresh_decoded" && fetchDecoded) {
-      const refreshedDecoded = await fetchDecoded(docId);
-      const retrySelection = selection.map((item) => {
-        const page = refreshedDecoded.pages.find((entry) => entry.page_index === pageIndex);
-        const match = page?.elements.find((element) => element.id === item.element_id);
-        return match
+  // Optimistic concurrency: on version conflicts, re-fetch + (optionally) replan before retrying.
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const response = await attemptCommit(currentSelection, currentOps);
+      return { response, selection: currentSelection, refreshedOverlay };
+    } catch (error) {
+      const conflict = parsePatchConflictDetails(error);
+      if (!conflict) {
+        throw error;
+      }
+      if (conflict.currentOverlayVersion !== undefined) {
+        refreshedOverlay = await fetchOverlay(docId, pageIndex);
+        currentBaseVersion = conflict.currentOverlayVersion ?? refreshedOverlay.overlay_version;
+        if (planOverlayPatch && planRequest) {
+          const plan = await planOverlayPatch({
+            ...planRequest,
+            base_overlay_version: currentBaseVersion
+          });
+          currentOps = plan.ops;
+        }
+        continue;
+      }
+      if (conflict.retryHint === "refresh_decoded" && fetchDecoded) {
+        const refreshedDecoded = await fetchDecoded(docId);
+        currentSelection = currentSelection.map((item) => {
+          const page = refreshedDecoded.pages.find((entry) => entry.page_index === pageIndex);
+          const match = page?.elements.find((element) => element.id === item.element_id);
+          return match
+            ? {
+                ...item,
+                text: match.text ?? item.text,
+                content_hash: match.content_hash ?? item.content_hash,
+                bbox: match.bbox_norm ?? item.bbox
+              }
+            : item;
+        });
+        continue;
+      }
+      refreshedOverlay = await fetchOverlay(docId, pageIndex);
+      const baseSelection = currentSelection[0];
+      const resolvedElementId = conflict.resolvedElementId ?? baseSelection.element_id;
+      const refreshedEntry =
+        refreshedOverlay.overlay.find((entry) => entry.element_id === resolvedElementId) ??
+        (conflict.currentEntry?.elementId
           ? {
-              ...item,
-              text: match.text ?? item.text,
-              content_hash: match.content_hash ?? item.content_hash,
-              bbox: match.bbox_norm ?? item.bbox
+              element_id: conflict.currentEntry.elementId,
+              text: conflict.currentEntry.text ?? baseSelection.text,
+              content_hash: conflict.currentEntry.contentHash ?? baseSelection.content_hash
             }
-          : item;
-      });
-      const response = await attemptCommit(retrySelection);
-      return { response, selection: retrySelection };
+          : undefined);
+      const nextHash =
+        conflict.currentContentHash ?? refreshedEntry?.content_hash ?? baseSelection.content_hash;
+      const nextText = refreshedEntry?.text ?? baseSelection.text;
+      currentSelection = currentSelection.map((item) => ({
+        ...item,
+        content_hash: nextHash,
+        text: nextText
+      }));
     }
-    const refreshedOverlay = await fetchOverlay(docId, pageIndex);
-    const baseSelection = selection[0];
-    const resolvedElementId = conflict.resolvedElementId ?? baseSelection.element_id;
-    const refreshedEntry =
-      refreshedOverlay.overlay.find((entry) => entry.element_id === resolvedElementId) ??
-      (conflict.currentEntry?.elementId
-        ? {
-            element_id: conflict.currentEntry.elementId,
-            text: conflict.currentEntry.text ?? baseSelection.text,
-            content_hash: conflict.currentEntry.contentHash ?? baseSelection.content_hash
-          }
-        : undefined);
-    const nextHash =
-      conflict.currentContentHash ?? refreshedEntry?.content_hash ?? baseSelection.content_hash;
-    const nextText = refreshedEntry?.text ?? baseSelection.text;
-    const retrySelection = selection.map((item) => ({
-      ...item,
-      element_id: resolvedElementId,
-      content_hash: nextHash,
-      text: nextText
-    }));
-    const response = await attemptCommit(retrySelection);
-    return { response, selection: retrySelection, refreshedOverlay };
   }
+
+  throw new Error("Unable to apply overlay changes after retrying.");
 }

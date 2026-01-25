@@ -8,6 +8,7 @@ def test_overlay_patch_commit_accepts_update_style() -> None:
         {
             "doc_id": "doc-123",
             "page_index": 0,
+            "base_overlay_version": 0,
             "selection": [
                 {
                     "element_id": "path-1",

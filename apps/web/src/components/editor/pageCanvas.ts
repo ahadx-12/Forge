@@ -35,6 +35,7 @@ export const normalizedToPixelRect = (
   bbox: [number, number, number, number],
   pageSize: PageCanvasSize
 ): PagePixelRect => {
+  // Normalized bboxes use a top-left origin (y grows downward), matching DOM coordinates.
   const [x0, y0, x1, y1] = bbox;
   const left = x0 * pageSize.width;
   const top = y0 * pageSize.height;
@@ -42,4 +43,20 @@ export const normalizedToPixelRect = (
   const height = Math.max(0, (y1 - y0) * pageSize.height);
 
   return { left, top, width, height };
+};
+
+export const pixelRectToNormalizedBBox = (
+  rect: { left: number; top: number; width: number; height: number },
+  pageSize: PageCanvasSize
+): [number, number, number, number] => {
+  // Normalized bboxes use a top-left origin (y grows downward), matching DOM coordinates.
+  if (!pageSize.width || !pageSize.height) {
+    return [0, 0, 0, 0];
+  }
+  const x0 = rect.left / pageSize.width;
+  const y0 = rect.top / pageSize.height;
+  const x1 = (rect.left + rect.width) / pageSize.width;
+  const y1 = (rect.top + rect.height) / pageSize.height;
+  const clamp = (value: number) => Math.max(0, Math.min(1, value));
+  return [clamp(Math.min(x0, x1)), clamp(Math.min(y0, y1)), clamp(Math.max(x0, x1)), clamp(Math.max(y0, y1))];
 };
