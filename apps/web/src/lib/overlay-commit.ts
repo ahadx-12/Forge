@@ -127,7 +127,6 @@ export async function commitOverlayWithRetry(options: {
     const nextText = refreshedEntry?.text ?? baseSelection.text;
     const retrySelection = selection.map((item) => ({
       ...item,
-      element_id: resolvedElementId,
       content_hash: nextHash,
       text: nextText
     }));
