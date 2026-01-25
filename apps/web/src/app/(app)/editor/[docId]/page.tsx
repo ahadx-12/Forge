@@ -8,6 +8,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist/types/
 
 import {
   apiUrl,
+  ApiError,
   commitOverlayPatch,
   exportPdfUrl,
   getDecodedDocument,
@@ -29,7 +30,11 @@ import {
 import { PdfJsPage } from "@/components/editor/PdfJsPage";
 import { commitOverlayWithRetry } from "@/lib/overlay-commit";
 import { getPdfWorkerSrc } from "@/lib/pdfjs";
-import { area, pickDecodedElementsInRegion, type BBox } from "@/components/editor/decodedHitTest";
+import {
+  area,
+  pickDecodedTextElementsWithFallback,
+  type BBox
+} from "@/components/editor/decodedHitTest";
 import { isPdfFontAvailable, type PdfJsFontMap } from "@/components/editor/pdfTextRender";
 import { buildUpdateStyleOp } from "@/components/editor/overlayStyle";
 
@@ -324,7 +329,11 @@ export default function EditorPage() {
     window.open(exportPdfUrl(docId, maskMode), "_blank", "noopener,noreferrer");
   };
 
-  const handleRegionSelect = (pageIndex: number, bboxNorm: BBox) => {
+  const handleRegionSelect = (
+    pageIndex: number,
+    bboxNorm: BBox,
+    viewportSize: { width: number; height: number }
+  ) => {
     setActivePage(pageIndex + 1);
     if (!decodedDoc) {
       setPlanError("Decoded document data is still loading.");
@@ -335,9 +344,18 @@ export default function EditorPage() {
       setPlanError("Decoded page data not found.");
       return;
     }
-    const selected = pickDecodedElementsInRegion(decodedPage.elements, bboxNorm);
+    const selected = pickDecodedTextElementsWithFallback(decodedPage.elements, bboxNorm, {
+      viewportSize,
+      maxResults: 20,
+      paddingPx: 10,
+      nearestDistancePx: 24,
+      includePathsWhenEmpty: true
+    });
     if (!selected.length) {
-      setPlanError("No decoded elements found in the selection.");
+      setDecodedSelection(null);
+      setPlan(null);
+      setPlanError("No content in selection.");
+      setApplyError(null);
       return;
     }
     const primary = selected.reduce<{ id: string; size: number } | null>((best, element) => {
@@ -494,7 +512,11 @@ export default function EditorPage() {
       setPlan(null);
       setPrompt("");
     } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Unable to apply overlay change.");
+      if (err instanceof ApiError && err.code === "PATCH_CONFLICT") {
+        setApplyError("Another change happened. Refresh the selection and retry.");
+      } else {
+        setApplyError(err instanceof Error ? err.message : "Unable to apply overlay change.");
+      }
     } finally {
       setIsApplying(false);
     }
@@ -565,7 +587,11 @@ export default function EditorPage() {
           : current
       );
     } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Unable to apply style change.");
+      if (err instanceof ApiError && err.code === "PATCH_CONFLICT") {
+        setApplyError("Another change happened. Refresh the selection and retry.");
+      } else {
+        setApplyError(err instanceof Error ? err.message : "Unable to apply style change.");
+      }
     } finally {
       setIsApplying(false);
     }

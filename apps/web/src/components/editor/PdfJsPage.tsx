@@ -48,7 +48,11 @@ type PdfJsPageProps = {
   showDebugOverlay?: boolean;
   decodedPage?: DecodedPageV1 | null;
   selectedDecodedIds?: string[];
-  onRegionSelect?: (pageIndex: number, bbox: [number, number, number, number]) => void;
+  onRegionSelect?: (
+    pageIndex: number,
+    bbox: [number, number, number, number],
+    viewportSize: { width: number; height: number }
+  ) => void;
   onFontMapUpdate?: (pageIndex: number, fontMap: PdfJsFontMap) => void;
 };
 
@@ -389,7 +393,7 @@ export function PdfJsPage({
           <RegionSelectLayer
             width={viewportSize.width}
             height={viewportSize.height}
-            onSelect={(bbox) => onRegionSelect(pageIndex, bbox)}
+            onSelect={(bbox) => onRegionSelect(pageIndex, bbox, viewportSize)}
           />
         ) : null}
       </div>
